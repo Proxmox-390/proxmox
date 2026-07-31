@@ -6,6 +6,8 @@ use anyhow::{Error, format_err};
 use proxmox_auth_api::types::{Authid, Userid};
 use proxmox_section_config::SectionConfigData;
 
+use crate::types::TokenPolicy;
+
 static ACCESS_CONF: OnceLock<&'static dyn AccessControlConfig> = OnceLock::new();
 
 /// This trait specifies the functions a product needs to implement to get ACL tree based access
@@ -100,6 +102,18 @@ pub trait AccessControlConfig: Send + Sync {
     /// in case it is *not* using a bitmap) and the match between permissions needs to be exact.
     fn allow_partial_permission_match(&self) -> bool {
         true
+    }
+
+    /// Returns the token policy to enforce when API tokens are created or updated, if any.
+    ///
+    /// Override this to return the policy from the product's configuration. Return an error if that
+    /// configuration cannot be loaded, so token creation and expiration date updates fail instead
+    /// of silently proceeding without the policy. The token API calls this while holding the user
+    /// configuration lock, so implementations must not acquire that lock.
+    ///
+    /// Default: Returns `Ok(None)`, no policy is enforced.
+    fn token_policy(&self) -> Result<Option<TokenPolicy>, Error> {
+        Ok(None)
     }
 }
 

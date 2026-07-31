@@ -1,3 +1,4 @@
+use anyhow::{Error, bail};
 use serde::{Deserialize, Serialize};
 
 use const_format::concatcp;
@@ -176,6 +177,95 @@ pub struct TokenApiEntry {
 
 #[api(
     properties: {
+        "require-expiry": {
+            optional: true,
+            default: false,
+        },
+        "max-lifetime": {
+            optional: true,
+            minimum: 1,
+        },
+        "disallow-expiry-extension": {
+            optional: true,
+            default: false,
+        },
+    },
+)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, Updater)]
+#[serde(rename_all = "kebab-case")]
+/// Policy for the creation and update of API tokens.
+///
+/// Only token creation and updates are checked against the policy. Existing tokens stay valid, so
+/// enabling a policy does not invalidate already deployed tokens.
+pub struct TokenPolicy {
+    /// Require an expiration date for new API tokens and when changing the expiration date of
+    /// existing ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_expiry: Option<bool>,
+
+    /// Maximum lifetime of API tokens in seconds, counted from when the expiration date is set,
+    /// that is on creation or when an update changes it. Implies `require-expiry`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lifetime: Option<u64>,
+
+    /// Disallow moving the expiration date of existing API tokens later or removing it, so that
+    /// `max-lifetime` cannot be circumvented by extending tokens repeatedly. Shortening the
+    /// expiration date or setting one on a token that has none remains possible, and tokens can
+    /// still be deleted and recreated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disallow_expiry_extension: Option<bool>,
+}
+
+impl TokenPolicy {
+    /// Check the expiration date of a new token against the policy, 0 or less meaning none.
+    pub fn check_new_expiry(&self, expire: i64, now: i64) -> Result<(), Error> {
+        self.check_expiry_bounds(expire, now)
+    }
+
+    /// Check an update of the expiration date of an existing token against the policy.
+    ///
+    /// `expire` is the submitted and `current` the stored expiration date, 0 or less meaning none.
+    /// An unchanged date always passes, so updates of tokens that predate the policy keep working.
+    pub fn check_expiry_update(&self, expire: i64, current: i64, now: i64) -> Result<(), Error> {
+        if expire == current {
+            return Ok(());
+        }
+
+        // removing the expiration date or moving it later extends the token
+        if self.disallow_expiry_extension.unwrap_or_default()
+            && current > 0
+            && (expire <= 0 || expire > current)
+        {
+            bail!(
+                "the token policy does not allow extending the expiration date of an existing token"
+            );
+        }
+
+        self.check_expiry_bounds(expire, now)
+    }
+
+    fn check_expiry_bounds(&self, expire: i64, now: i64) -> Result<(), Error> {
+        // a token that never expires exceeds any maximum lifetime
+        if expire <= 0 && (self.require_expiry.unwrap_or_default() || self.max_lifetime.is_some()) {
+            bail!("the token policy requires an expiration date");
+        }
+
+        if let Some(max_lifetime) = self.max_lifetime {
+            // saturate, as an extreme configured lifetime would overflow
+            if expire > now.saturating_add_unsigned(max_lifetime) {
+                bail!(
+                    "the expiration date exceeds the maximum token lifetime of {max_lifetime} \
+                     seconds set by the token policy"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[api(
+    properties: {
         userid: {
             type: Userid,
         },
@@ -316,3 +406,140 @@ pub const REGENERATE_TOKEN_SCHEMA: Schema =
     BooleanSchema::new("Regenerate token secret while keeping permissions.")
         .default(false)
         .schema();
+
+#[cfg(test)]
+mod tests {
+    use super::TokenPolicy;
+
+    // fixed reference time and a 90 day maximum lifetime for deterministic bounds checks
+    const NOW: i64 = 1_000_000_000;
+    const MAX: i64 = 90 * 24 * 60 * 60;
+
+    // the expiration date of the existing token in the update cases
+    const CURRENT: i64 = NOW + 100;
+
+    const EMPTY: TokenPolicy = TokenPolicy {
+        require_expiry: None,
+        max_lifetime: None,
+        disallow_expiry_extension: None,
+    };
+
+    const REQUIRE_EXPIRY: TokenPolicy = TokenPolicy {
+        require_expiry: Some(true),
+        ..EMPTY
+    };
+
+    const MAX_LIFETIME: TokenPolicy = TokenPolicy {
+        max_lifetime: Some(MAX as u64),
+        ..EMPTY
+    };
+
+    const NO_EXTENSION: TokenPolicy = TokenPolicy {
+        disallow_expiry_extension: Some(true),
+        ..EMPTY
+    };
+
+    fn create_ok(policy: &TokenPolicy, expire: i64) -> bool {
+        policy.check_new_expiry(expire, NOW).is_ok()
+    }
+
+    fn update_ok(policy: &TokenPolicy, expire: i64, current: i64) -> bool {
+        policy.check_expiry_update(expire, current, NOW).is_ok()
+    }
+
+    #[test]
+    fn empty_policy_allows_everything() {
+        assert!(create_ok(&EMPTY, 0));
+        assert!(create_ok(&EMPTY, NOW + 100));
+        assert!(update_ok(&EMPTY, 0, CURRENT));
+    }
+
+    #[test]
+    fn require_expiry() {
+        assert!(!create_ok(&REQUIRE_EXPIRY, 0));
+        assert!(create_ok(&REQUIRE_EXPIRY, NOW + 100));
+        assert!(!update_ok(&REQUIRE_EXPIRY, 0, CURRENT));
+        assert!(update_ok(&REQUIRE_EXPIRY, NOW + 200, CURRENT));
+    }
+
+    #[test]
+    fn max_lifetime_implies_require_expiry() {
+        assert!(!create_ok(&MAX_LIFETIME, 0));
+        let explicitly_not_required = TokenPolicy {
+            require_expiry: Some(false),
+            ..MAX_LIFETIME
+        };
+        assert!(!create_ok(&explicitly_not_required, 0));
+    }
+
+    #[test]
+    fn negative_expiry_means_none() {
+        // `ApiToken::is_active` treats a negative expiration date as none, so the checks for a
+        // missing one have to catch it as well
+        assert!(!create_ok(&REQUIRE_EXPIRY, -1));
+        assert!(!create_ok(&MAX_LIFETIME, -1));
+        assert!(!update_ok(&REQUIRE_EXPIRY, -1, CURRENT));
+        assert!(!update_ok(&NO_EXTENSION, -1, CURRENT));
+        // a stored negative value counts as a token without an expiration date
+        assert!(update_ok(&NO_EXTENSION, NOW + 100, -1));
+    }
+
+    #[test]
+    fn max_lifetime_bounds() {
+        assert!(create_ok(&MAX_LIFETIME, NOW + 100));
+        assert!(create_ok(&MAX_LIFETIME, NOW + MAX));
+        assert!(!create_ok(&MAX_LIFETIME, NOW + MAX + 1));
+        // an expiration date in the past is odd, but within any bound
+        assert!(create_ok(&MAX_LIFETIME, NOW - 100));
+        assert!(update_ok(&MAX_LIFETIME, NOW + 200, CURRENT));
+        assert!(!update_ok(&MAX_LIFETIME, NOW + MAX + 1, CURRENT));
+    }
+
+    #[test]
+    fn extreme_max_lifetime_does_not_overflow() {
+        let policy = TokenPolicy {
+            max_lifetime: Some(u64::MAX),
+            ..EMPTY
+        };
+        assert!(create_ok(&policy, NOW + 100));
+        assert!(create_ok(&policy, i64::MAX));
+    }
+
+    #[test]
+    fn unchanged_expiry_passes() {
+        assert!(update_ok(&REQUIRE_EXPIRY, 0, 0));
+        assert!(update_ok(&MAX_LIFETIME, NOW + MAX + 1, NOW + MAX + 1));
+    }
+
+    #[test]
+    fn disallow_expiry_extension() {
+        // moving the expiration date later or removing it is rejected
+        assert!(!update_ok(&NO_EXTENSION, CURRENT + 1, CURRENT));
+        assert!(!update_ok(&NO_EXTENSION, 0, CURRENT));
+        // shortening it, even into the past, stays allowed
+        assert!(update_ok(&NO_EXTENSION, CURRENT - 1, CURRENT));
+        assert!(update_ok(&NO_EXTENSION, NOW - 100, CURRENT));
+        // as does setting one on a token without any
+        assert!(update_ok(&NO_EXTENSION, NOW + 100, 0));
+        // creation is unaffected
+        assert!(create_ok(&NO_EXTENSION, NOW + 100));
+        assert!(create_ok(&NO_EXTENSION, 0));
+    }
+
+    #[test]
+    fn disallow_expiry_extension_combined() {
+        let policy = TokenPolicy {
+            require_expiry: Some(true),
+            ..NO_EXTENSION
+        };
+        // a compliant new date still gets rejected as an extension
+        assert!(!update_ok(&policy, NOW + 200, CURRENT));
+        assert!(create_ok(&policy, NOW + 200));
+        // shortening under a maximum lifetime stays allowed as well
+        let policy = TokenPolicy {
+            max_lifetime: Some(MAX as u64),
+            ..NO_EXTENSION
+        };
+        assert!(update_ok(&policy, CURRENT - 1, CURRENT));
+    }
+}
