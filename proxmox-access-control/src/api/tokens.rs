@@ -99,6 +99,12 @@ pub fn generate_token(
         );
     }
 
+    // check the policy before generating the secret to avoid leaving an orphaned entry in the
+    // token shadow file on rejection
+    if let Some(policy) = crate::init::access_conf().token_policy()? {
+        policy.check_new_expiry(expire.unwrap_or(0), proxmox_time::epoch_i64())?;
+    }
+
     let secret = token_shadow::generate_and_set_secret(&tokenid)?;
 
     let token = ApiToken {
@@ -206,6 +212,10 @@ pub fn update_token(
     }
 
     if let Some(expire) = expire {
+        if let Some(policy) = crate::init::access_conf().token_policy()? {
+            let current = data.expire.unwrap_or(0);
+            policy.check_expiry_update(expire, current, proxmox_time::epoch_i64())?;
+        }
         data.expire = if expire > 0 { Some(expire) } else { None };
     }
 
