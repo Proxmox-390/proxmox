@@ -19,7 +19,7 @@ CONTROL="$PWD/${CRATE}/debian/control"
 if [ -e "$CONTROL" ]; then
     # check but only warn, debcargo fails anyway if crates are missing
     dpkg-checkbuilddeps $PWD/${CRATE}/debian/control || true
-    [ "x$NOCONTROL" = 'x' ] && rm -f "$PWD/${CRATE}/debian/control"
+    [ -z "$NOCONTROL" ] && rm -f "$PWD/${CRATE}/debian/control"
 fi
 
 debcargo package \
@@ -35,6 +35,6 @@ rm -f debian/source/format.debcargo.hint
 ${BUILDCMD}
 
 # needs all crates build-dependencies, which can be more than what debcargo assembles.
-[ "x$NOTEST" = "x" ] && ${TEST_CMD}
+[ -z "$NOTEST" ] && ${TEST_CMD}
 
-[ "x$NOCONTROL" = "x" ] && cp debian/control "$CONTROL"
+[ -z "$NOCONTROL" ] && cp debian/control "$CONTROL"
