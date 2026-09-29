@@ -12,7 +12,7 @@ TEST_CMD="${TEST_CMD:-"$CARGO test --all-features --all-targets --release"}"
 
 mkdir -p "${BUILDDIR}"
 echo system >"${BUILDDIR}"/rust-toolchain
-rm -rf ""${BUILDDIR}"/${CRATE}"
+rm -rf "${BUILDDIR}/${CRATE}"
 
 CONTROL="$PWD/${CRATE}/debian/control"
 
@@ -26,11 +26,11 @@ debcargo package \
     --config "$PWD/${CRATE}/debian/debcargo.toml" \
     --changelog-ready \
     --no-overlay-write-back \
-    --directory "$PWD/"${BUILDDIR}"/${CRATE}" \
+    --directory "$PWD/${BUILDDIR}/${CRATE}" \
     "${CRATE}" \
     "$(dpkg-parsechangelog -l "${CRATE}/debian/changelog" -SVersion | sed -e 's/-.*//')"
 
-cd ""${BUILDDIR}"/${CRATE}"
+cd "${BUILDDIR}/${CRATE}"
 rm -f debian/source/format.debcargo.hint
 ${BUILDCMD}
 
