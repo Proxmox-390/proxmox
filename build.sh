@@ -18,8 +18,8 @@ CONTROL="$PWD/${CRATE}/debian/control"
 
 if [ -e "$CONTROL" ]; then
     # check but only warn, debcargo fails anyway if crates are missing
-    dpkg-checkbuilddeps $PWD/${CRATE}/debian/control || true
-    [ -z "$NOCONTROL" ] && rm -f "$PWD/${CRATE}/debian/control"
+    dpkg-checkbuilddeps "$CONTROL" || true
+    [ -z "$NOCONTROL" ] && rm -f "$CONTROL"
 fi
 
 debcargo package \
