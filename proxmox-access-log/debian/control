@@ -27,7 +27,8 @@ Depends:
  librust-serde-1+derive-dev,
  librust-thiserror-2+default-dev
 Suggests:
- librust-proxmox-access-log+api-types-dev (= ${binary:Version})
+ librust-proxmox-access-log+api-types-dev (= ${binary:Version}),
+ librust-proxmox-access-log+query-dev (= ${binary:Version})
 Provides:
  librust-proxmox-access-log+default-dev (= ${binary:Version}),
  librust-proxmox-access-log-0-dev (= ${binary:Version}),
@@ -55,3 +56,22 @@ Provides:
 Description: Parser for the API access logs of Proxmox products - feature "api-types"
  This metapackage enables feature "api-types" for the Rust proxmox-access-log
  crate, by pulling in any additional dependencies needed by that feature.
+
+Package: librust-proxmox-access-log+query-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-access-log-dev (= ${binary:Version}),
+ librust-anyhow-1+default-dev,
+ librust-flate2-1+default-dev,
+ librust-libc-0.2+default-dev (>= 0.2.107-~~),
+ librust-log-0.4+default-dev (>= 0.4.17-~~),
+ librust-zstd-0.13+default-dev
+Provides:
+ librust-proxmox-access-log-0+query-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1+query-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1.0+query-dev (= ${binary:Version})
+Description: Parser for the API access logs of Proxmox products - feature "query"
+ This metapackage enables feature "query" for the Rust proxmox-access-log crate,
+ by pulling in any additional dependencies needed by that feature.

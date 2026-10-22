@@ -12,9 +12,14 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
 percent-encoding.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+zstd = { workspace = true, optional = true }
 
 proxmox-schema = { workspace = true, optional = true, features = ["api-macro", "api-types"] }
 
@@ -24,3 +29,8 @@ serde_json.workspace = true
 [features]
 default = []
 api-types = ["dep:proxmox-schema"]
+query = ["dep:anyhow", "dep:flate2", "dep:libc", "dep:log", "dep:zstd"]
+
+[[test]]
+name = "query"
+required-features = ["query"]

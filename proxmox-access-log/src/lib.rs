@@ -34,10 +34,20 @@ use proxmox_schema::{api, api_types::IP_SCHEMA};
 
 mod filter;
 mod reader;
+mod result;
 mod time;
+
+#[cfg(feature = "query")]
+mod query;
 
 pub use filter::{AccessLogFilter, MAX_AUTH_ID_LENGTH};
 pub use reader::{AccessLogReader, Error};
+#[cfg(feature = "api-types")]
+pub use result::{CURSOR_SCHEMA, HEAD_CURSOR_SCHEMA, LIMIT_SCHEMA};
+pub use result::{DEFAULT_LIMIT, Gap, GapReason, MAX_CURSOR_LENGTH, MAX_LIMIT, QueryResult};
+
+#[cfg(feature = "query")]
+pub use query::{InvalidRequest, MAX_PARSE_BYTES, MAX_READ_BYTES, log_files, query, query_newer};
 
 /// proxmox-rest-server truncates user agents to this length. A longer one without a recognized
 /// record start cannot stem from an intact log entry.
@@ -151,14 +161,17 @@ pub(crate) struct Prefix<'a> {
     pub(crate) auth_id: Option<&'a str>,
     pub(crate) time: i64,
     pub(crate) utc_offset: i32,
+    /// The client, auth-id and timestamp fields as logged.
+    #[cfg_attr(not(feature = "query"), allow(dead_code))]
+    pub(crate) raw: [&'a str; 3],
     /// The rest of the line after the opening quote of the request.
     pub(crate) rest: &'a str,
 }
 
 impl<'a> Prefix<'a> {
     pub(crate) fn parse(line: &'a str) -> Result<Self, ParseError> {
-        let (client, rest) = line.split_once(' ').ok_or(ParseError::Client)?;
-        let client = match client {
+        let (raw_client, rest) = line.split_once(' ').ok_or(ParseError::Client)?;
+        let client = match raw_client {
             "-" => None,
             client => Some(
                 IpAddr::from_str(client)
@@ -170,18 +183,18 @@ impl<'a> Prefix<'a> {
         // the client's identity according to its ident server, which is never queried
         let rest = rest.strip_prefix("- ").ok_or(ParseError::Ident)?;
 
-        let (auth_id, rest) = rest.split_once(' ').ok_or(ParseError::AuthId)?;
-        let auth_id = match auth_id {
+        let (raw_auth_id, rest) = rest.split_once(' ').ok_or(ParseError::AuthId)?;
+        let auth_id = match raw_auth_id {
             "" => return Err(ParseError::AuthId),
             "-" => None,
             auth_id => Some(auth_id),
         };
 
-        let (time, rest) = rest
+        let (raw_time, rest) = rest
             .strip_prefix('[')
             .and_then(|rest| rest.split_once("] "))
             .ok_or(ParseError::Time)?;
-        let (time, utc_offset) = time::parse_timestamp(time).ok_or(ParseError::Time)?;
+        let (time, utc_offset) = time::parse_timestamp(raw_time).ok_or(ParseError::Time)?;
 
         let rest = rest.strip_prefix('"').ok_or(ParseError::Request)?;
 
@@ -190,6 +203,7 @@ impl<'a> Prefix<'a> {
             auth_id,
             time,
             utc_offset,
+            raw: [raw_client, raw_auth_id, raw_time],
             rest,
         })
     }

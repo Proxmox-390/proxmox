@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "api-types")]
 use proxmox_schema::{api, api_types::IP_SCHEMA};
 
-use crate::AccessLogEntry;
+use crate::{AccessLogEntry, Prefix};
 
 /// The longest auth-id a filter accepts, as API token names of Proxmox VE have no length limit.
 pub const MAX_AUTH_ID_LENGTH: usize = 1024;
@@ -114,6 +114,13 @@ impl AccessLogFilter {
             && self
                 .max_status
                 .is_none_or(|max| entry.status.is_some_and(|status| status <= max))
+    }
+
+    /// Whether the fields a line starts with meet the criteria about them, so a line that does
+    /// not can be skipped without parsing the rest.
+    #[cfg_attr(not(feature = "query"), allow(dead_code))]
+    pub(crate) fn matches_prefix(&self, prefix: &Prefix) -> bool {
+        self.matches_fields(prefix.time, prefix.auth_id, prefix.client)
     }
 
     fn matches_fields(&self, time: i64, auth_id: Option<&str>, client: Option<IpAddr>) -> bool {

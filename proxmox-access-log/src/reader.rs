@@ -22,7 +22,7 @@ pub(crate) enum Line<'a> {
     /// A complete line, without its line terminator.
     Complete(&'a [u8]),
     /// A line longer than [`MAX_LINE_LENGTH`], which got skipped, with its first bytes.
-    TooLong(#[allow(dead_code)] &'a [u8]),
+    TooLong(#[cfg_attr(not(feature = "query"), allow(dead_code))] &'a [u8]),
 }
 
 /// Reads the lines of a log, skipping lines too long to stem from the servers without keeping them
@@ -48,6 +48,18 @@ impl<R: BufRead> LineReader<R> {
     /// The offset of the next line, which is the number of bytes read in lines so far.
     pub(crate) fn offset(&self) -> u64 {
         self.offset
+    }
+
+    #[cfg(feature = "query")]
+    pub(crate) fn get_ref(&self) -> &R {
+        &self.reader
+    }
+
+    /// The first bytes of the unterminated last line, after [`Self::next_line`] found no more
+    /// complete lines.
+    #[cfg(feature = "query")]
+    pub(crate) fn pending(&self) -> &[u8] {
+        &self.buffer
     }
 
     /// Reads the next line, returning it with the offset it starts at and its length, including
