@@ -31,7 +31,8 @@ Depends:
  librust-serde-1+derive-dev,
  librust-thiserror-2+default-dev
 Suggests:
- librust-proxmox-apt-history+api-types-dev (= ${binary:Version})
+ librust-proxmox-apt-history+api-types-dev (= ${binary:Version}),
+ librust-proxmox-apt-history+impl-dev (= ${binary:Version})
 Provides:
  librust-proxmox-apt-history+default-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0-dev (= ${binary:Version}),
@@ -61,3 +62,19 @@ Provides:
 Description: Parsers for the logs APT keeps about package changes - feature "api-types"
  This metapackage enables feature "api-types" for the Rust proxmox-apt-history
  crate, by pulling in any additional dependencies needed by that feature.
+
+Package: librust-proxmox-apt-history+impl-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-apt-history-dev (= ${binary:Version}),
+ librust-proxmox-apt-history+api-types-dev (= ${binary:Version}),
+ librust-log-0.4+default-dev (>= 0.4.17-~~)
+Provides:
+ librust-proxmox-apt-history-0+impl-dev (= ${binary:Version}),
+ librust-proxmox-apt-history-0.1+impl-dev (= ${binary:Version}),
+ librust-proxmox-apt-history-0.1.0+impl-dev (= ${binary:Version})
+Description: Parsers for the logs APT keeps about package changes - feature "impl"
+ This metapackage enables feature "impl" for the Rust proxmox-apt-history crate,
+ by pulling in any additional dependencies needed by that feature.

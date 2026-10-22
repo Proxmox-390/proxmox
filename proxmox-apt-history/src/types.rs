@@ -120,3 +120,43 @@ pub struct HistoryEntry {
     /// Changed packages, in the order APT logged them.
     pub packages: Vec<PackageChange>,
 }
+
+// Numbers are also accepted as strings, as Perl API handlers pass on query parameters as such.
+#[cfg(feature = "api-types")]
+#[api(
+    properties: {
+        limit: {
+            optional: true,
+            minimum: 1,
+        },
+    },
+)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+/// Options for listing APT history entries.
+pub struct HistoryListOptions {
+    /// Only list entries that started at or after this Unix epoch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "proxmox_serde::perl::deserialize_i64"
+    )]
+    pub since: Option<i64>,
+    /// Only list entries that started at or before this Unix epoch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "proxmox_serde::perl::deserialize_i64"
+    )]
+    pub until: Option<i64>,
+    /// Only list entries that changed the package with this name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// List at most this many entries.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "proxmox_serde::perl::deserialize_u64"
+    )]
+    pub limit: Option<u64>,
+}

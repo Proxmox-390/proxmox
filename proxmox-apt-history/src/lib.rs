@@ -9,10 +9,17 @@
 //! The parsers only need a minimal set of dependencies. They are not available on `wasm32`, where
 //! only the types are, for use in web UIs. Optional features add more on top:
 //!
-//! - **`api-types`**: `proxmox-schema` API type derives.
+//! - **`api-types`**: `proxmox-schema` API type derives and `HistoryListOptions`.
+//! - **`impl`**: listing the history entries of the system and getting their terminal output, see
+//!   `list_history` and `get_term_log`.
 
 use std::io;
 use std::path::PathBuf;
+
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+mod logs;
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+pub use logs::{get_term_log, list_history};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
@@ -38,6 +45,8 @@ pub use terminal::clean_terminal_output;
 mod time;
 
 mod types;
+#[cfg(feature = "api-types")]
+pub use types::HistoryListOptions;
 pub use types::{HistoryEntry, PackageAction, PackageChange};
 
 /// Directory in which APT keeps its logs by default.
