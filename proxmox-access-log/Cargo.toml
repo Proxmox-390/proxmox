@@ -12,8 +12,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+percent-encoding.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
+proxmox-schema = { workspace = true, optional = true, features = ["api-macro", "api-types"] }
+
 [dev-dependencies]
 serde_json.workspace = true
+
+[features]
+default = []
+api-types = ["dep:proxmox-schema"]

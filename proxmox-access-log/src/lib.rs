@@ -29,9 +29,14 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "api-types")]
+use proxmox_schema::{api, api_types::IP_SCHEMA};
+
+mod filter;
 mod reader;
 mod time;
 
+pub use filter::{AccessLogFilter, MAX_AUTH_ID_LENGTH};
 pub use reader::{AccessLogReader, Error};
 
 /// proxmox-rest-server truncates user agents to this length. A longer one without a recognized
@@ -71,6 +76,14 @@ pub enum LogFormat {
     RestServer,
 }
 
+#[cfg_attr(feature = "api-types", api(
+    properties: {
+        client: {
+            schema: IP_SCHEMA,
+            optional: true,
+        },
+    },
+))]
 /// A request as recorded in an access log.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -316,6 +329,91 @@ impl AccessLogEntry {
     pub fn query(&self) -> Option<&str> {
         Some(self.uri.as_deref()?.split_once('?')?.1)
     }
+
+    /// Removes what is most likely to contain secrets before showing an entry to API users.
+    ///
+    /// Both servers accept the parameters of any call in the query, passwords included, so this
+    /// replaces the value of each query parameter, keeping its name, and drops the request line,
+    /// which repeats the query. It also replaces URI user information, like
+    /// `http://user:pass@host/` or `//user:pass@host/`, which pve-http-server logs as sent. Names
+    /// and paths can still contain secrets in rare cases.
+    pub fn redact(&mut self, format: LogFormat) {
+        self.request_line = None;
+
+        let Some(uri) = self.uri.take() else {
+            return;
+        };
+        let (path, query) = match uri.split_once('?') {
+            Some((path, query)) => (path, Some(query)),
+            None => (uri.as_str(), None),
+        };
+        let mut redacted = redact_userinfo(path);
+        let Some(query) = query else {
+            self.uri = Some(redacted);
+            return;
+        };
+
+        // pve-http-server also separates parameters with semicolons
+        let is_separator = |c: char| c == '&' || (c == ';' && format == LogFormat::PveHttpServer);
+
+        // TODO: replace only the values of parameters that the API schema marks as sensitive and
+        // keep the others, like filters, readable.
+        redacted.push('?');
+        let mut rest = query;
+        loop {
+            let end = rest.find(is_separator).unwrap_or(rest.len());
+            match rest[..end].split_once('=') {
+                Some((name, _)) => {
+                    redacted.push_str(name);
+                    redacted.push_str("=[REDACTED]");
+                }
+                None => redacted.push_str(&rest[..end]),
+            }
+            let Some(separator) = rest[end..].chars().next() else {
+                break;
+            };
+            redacted.push(separator);
+            rest = &rest[end + separator.len_utf8()..];
+        }
+        self.uri = Some(redacted);
+    }
+}
+
+/// Replaces the user information in a URI authority.
+fn redact_userinfo(path: &str) -> String {
+    match userinfo(path) {
+        Some(userinfo) => format!(
+            "{}[REDACTED]{}",
+            &path[..userinfo.start],
+            &path[userinfo.end..]
+        ),
+        None => path.to_string(),
+    }
+}
+
+/// Removes the user information in a URI authority, with its `@`.
+pub(crate) fn strip_userinfo(path: &str) -> std::borrow::Cow<'_, str> {
+    match userinfo(path) {
+        Some(userinfo) => {
+            format!("{}{}", &path[..userinfo.start], &path[userinfo.end + 1..]).into()
+        }
+        None => path.into(),
+    }
+}
+
+/// Where the user information in the authority of an absolute URI or a network-path reference
+/// like `//user:password@host/` is, without its `@`. pve-http-server routes both by their path.
+fn userinfo(path: &str) -> Option<Range<usize>> {
+    let authority_start = match path.strip_prefix("//") {
+        Some(_) => 2,
+        None if path.starts_with('/') => return None,
+        None => path.find("://")? + "://".len(),
+    };
+    let authority_end = path[authority_start..]
+        .find('/')
+        .map_or(path.len(), |end| authority_start + end);
+    let at = path[authority_start..authority_end].rfind('@')?;
+    Some(authority_start..authority_start + at)
 }
 
 /// Finds the first writer-shaped timestamp followed by the opening quote of a request. Recognition
@@ -760,7 +858,7 @@ mod tests {
         };
 
         // a short next record fits into the length of a user agent
-        let entry = parse_rest(&line(
+        let mut entry = parse_rest(&line(
             "curl::ffff:192.0.2.11 - - [22/10/2026:14:03:52 +0200] \
              \"POST /api2/json/access/ticket?password=SECRET\" 401 0 -",
         ))
@@ -771,6 +869,8 @@ mod tests {
         );
         assert_eq!((entry.status, entry.size), (Some(200), Some(89)));
         assert_eq!(entry.user_agent, None);
+        entry.redact(LogFormat::RestServer);
+        assert!(!serde_json::to_string(&entry).unwrap().contains("SECRET"));
 
         // a client can send such a user agent, and only loses it
         let entry = parse_rest(&line("x [22/10/2026:14:03:51 +0200] \"y")).unwrap();
@@ -835,7 +935,7 @@ mod tests {
     #[test]
     fn writer_timestamp_shapes_in_client_text() {
         for time in RECORD_TIMES {
-            let entry = parse_rest(&format!(
+            let mut entry = parse_rest(&format!(
                 "192.0.2.10 - root@pam [22/10/2026:14:03:51 +0200] \
                  \"GET /first\" 200 5 curl192.0.2.11 - - [{time}] \
                  \"POST /x?p=SECRET\" 401 0 -"
@@ -844,6 +944,8 @@ mod tests {
             assert_eq!((entry.status, entry.size), (Some(200), Some(5)));
             assert_eq!(entry.user_agent, None);
             assert_eq!(entry.uri.as_deref(), Some("/first"));
+            entry.redact(LogFormat::RestServer);
+            assert!(!serde_json::to_string(&entry).unwrap().contains("SECRET"));
 
             let entry = parse_pve(&format!(
                 "192.0.2.10 - root@pam [22/10/2026:14:03:51 +0200] \
@@ -900,7 +1002,7 @@ mod tests {
         ] {
             let mut accepted = 0;
             for (cut, line) in cut_lines(first, second) {
-                let Ok(entry) = parse_rest(&line) else {
+                let Ok(mut entry) = parse_rest(&line) else {
                     continue;
                 };
                 accepted += 1;
@@ -912,6 +1014,8 @@ mod tests {
                     },
                     "cut at {cut}"
                 );
+                entry.redact(LogFormat::RestServer);
+                assert!(!serde_json::to_string(&entry).unwrap().contains("SECRET"));
             }
             assert!(accepted > 0);
         }
@@ -1002,7 +1106,7 @@ mod tests {
             let expected = parse_pve(first).unwrap();
             let mut with_request = 0;
             for (cut, line) in cut_lines(first, second) {
-                let Ok(entry) = parse_pve(&line) else {
+                let Ok(mut entry) = parse_pve(&line) else {
                     continue;
                 };
                 assert_eq!(
@@ -1024,6 +1128,8 @@ mod tests {
                         "cut at {cut}"
                     );
                 }
+                entry.redact(LogFormat::PveHttpServer);
+                assert!(!serde_json::to_string(&entry).unwrap().contains("SECRET"));
             }
             assert!(with_request > 0);
         }
@@ -1101,6 +1207,113 @@ mod tests {
     }
 
     #[test]
+    fn redaction() {
+        let redacted = |request: &str, format: LogFormat| {
+            let line = match format {
+                LogFormat::PveHttpServer => format!(
+                    "192.0.2.10 - - [22/10/2026:14:03:51 +0200] \"{request} HTTP/1.1 x\" 200 5"
+                ),
+                LogFormat::RestServer => {
+                    format!("192.0.2.10 - - [22/10/2026:14:03:51 +0200] \"{request}\" 200 5 -")
+                }
+            };
+            let mut entry = AccessLogEntry::parse(&line, format).unwrap();
+            entry.redact(format);
+            assert_eq!(entry.request_line, None);
+            entry.uri.unwrap()
+        };
+
+        for format in [LogFormat::PveHttpServer, LogFormat::RestServer] {
+            assert_eq!(redacted("GET /a/b", format), "/a/b");
+            assert_eq!(
+                redacted(
+                    "POST /access/ticket?username=root@pam&password=s=e&cret",
+                    format
+                ),
+                "/access/ticket?username=[REDACTED]&password=[REDACTED]&cret"
+            );
+            assert_eq!(
+                redacted("GET /x?a=1&a=2&&b&c=", format),
+                "/x?a=[REDACTED]&a=[REDACTED]&&b&c=[REDACTED]"
+            );
+            assert_eq!(redacted("GET /x?", format), "/x?");
+        }
+        assert_eq!(
+            redacted(
+                "GET http://root:secret@host/api2/json/x?p=1",
+                LogFormat::PveHttpServer
+            ),
+            "http://[REDACTED]@host/api2/json/x?p=[REDACTED]"
+        );
+        assert_eq!(
+            redacted("GET http://host/a@b", LogFormat::PveHttpServer),
+            "http://host/a@b"
+        );
+        assert_eq!(
+            redacted("GET /a://b@c/d", LogFormat::PveHttpServer),
+            "/a://b@c/d"
+        );
+        assert_eq!(
+            redacted(
+                "GET //root:secret@host/api2/json/x?p=1",
+                LogFormat::PveHttpServer
+            ),
+            "//[REDACTED]@host/api2/json/x?p=[REDACTED]"
+        );
+        assert_eq!(
+            redacted("GET ///a@b/c", LogFormat::PveHttpServer),
+            "///a@b/c"
+        );
+        assert_eq!(
+            redacted("GET //a://b@c/d", LogFormat::PveHttpServer),
+            "//a://b@c/d"
+        );
+        assert_eq!(
+            redacted("GET /x?a=1;b=2", LogFormat::PveHttpServer),
+            "/x?a=[REDACTED];b=[REDACTED]"
+        );
+        assert_eq!(
+            redacted("GET /x?a=1;b=2", LogFormat::RestServer),
+            "/x?a=[REDACTED]"
+        );
+    }
+
+    #[test]
+    fn ambiguous_entries_serialization() {
+        for request in [
+            "GET /first?own=SECRET HTTP/1.1 [-] \"GET /next?other=SECRET HTTP/1.1",
+            "[-] \"GET /next?other=SECRET HTTP/1.1",
+        ] {
+            let mut entry = parse_pve(&format!(
+                "192.0.2.10 - root@pam [22/10/2026:14:03:51 +0200] \"{request}\" 500 5"
+            ))
+            .unwrap();
+            let raw = serde_json::to_value(&entry).unwrap();
+            assert!(raw.get("status").is_none());
+            assert!(raw.get("size").is_none());
+            assert!(raw["request-line"].as_str().unwrap().contains("SECRET"));
+            assert_eq!(
+                serde_json::from_value::<AccessLogEntry>(raw.clone()).unwrap(),
+                entry
+            );
+            #[cfg(feature = "api-types")]
+            {
+                use proxmox_schema::ApiType;
+                AccessLogEntry::API_SCHEMA.verify_json(&raw).unwrap();
+            }
+            entry.redact(LogFormat::PveHttpServer);
+            let redacted = serde_json::to_value(&entry).unwrap();
+            assert!(redacted.get("request-line").is_none());
+            assert!(!redacted.to_string().contains("SECRET"));
+            #[cfg(feature = "api-types")]
+            {
+                use proxmox_schema::ApiType;
+                AccessLogEntry::API_SCHEMA.verify_json(&redacted).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn serialization() {
         let entry = parse_rest(
             "::ffff:192.0.2.10 - root@pam!t [22/10/2026:14:03:51 +0200] \"GET /\" 200 5 curl/8",
@@ -1121,6 +1334,11 @@ mod tests {
                 "user-agent": "curl/8",
             })
         );
+        #[cfg(feature = "api-types")]
+        {
+            use proxmox_schema::ApiType;
+            AccessLogEntry::API_SCHEMA.verify_json(&value).unwrap();
+        }
         assert_eq!(
             serde_json::from_value::<AccessLogEntry>(value).unwrap(),
             entry

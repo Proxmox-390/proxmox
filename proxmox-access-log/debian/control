@@ -6,6 +6,7 @@ Build-Depends: debhelper-compat (= 13),
 Build-Depends-Arch: cargo:native <!nocheck>,
  rustc:native (>= 1.88) <!nocheck>,
  libstd-rust-dev <!nocheck>,
+ librust-percent-encoding-2+default-dev (>= 2.1-~~) <!nocheck>,
  librust-serde-1+default-dev <!nocheck>,
  librust-serde-1+derive-dev <!nocheck>,
  librust-thiserror-2+default-dev <!nocheck>
@@ -21,9 +22,12 @@ Architecture: any
 Multi-Arch: same
 Depends:
  ${misc:Depends},
+ librust-percent-encoding-2+default-dev (>= 2.1-~~),
  librust-serde-1+default-dev,
  librust-serde-1+derive-dev,
  librust-thiserror-2+default-dev
+Suggests:
+ librust-proxmox-access-log+api-types-dev (= ${binary:Version})
 Provides:
  librust-proxmox-access-log+default-dev (= ${binary:Version}),
  librust-proxmox-access-log-0-dev (= ${binary:Version}),
@@ -34,3 +38,20 @@ Provides:
  librust-proxmox-access-log-0.1.0+default-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - Rust source code
  Source code for Debianized Rust crate "proxmox-access-log"
+
+Package: librust-proxmox-access-log+api-types-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-access-log-dev (= ${binary:Version}),
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+api-types-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~)
+Provides:
+ librust-proxmox-access-log-0+api-types-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1+api-types-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1.0+api-types-dev (= ${binary:Version})
+Description: Parser for the API access logs of Proxmox products - feature "api-types"
+ This metapackage enables feature "api-types" for the Rust proxmox-access-log
+ crate, by pulling in any additional dependencies needed by that feature.
