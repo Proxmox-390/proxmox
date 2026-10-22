@@ -1,0 +1,5 @@
+rust-proxmox-apt-history (0.1.0-1) trixie; urgency=medium
+
+  * initial version.
+
+ -- Proxmox Support Team <support@proxmox.com>  Thu, 22 Oct 2026 23:53:59 +0200

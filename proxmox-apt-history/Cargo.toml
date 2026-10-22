@@ -1,0 +1,25 @@
+[package]
+name = "proxmox-apt-history"
+description = "Parsers for the logs APT keeps about package changes"
+version = "0.1.0"
+
+authors.workspace = true
+edition.workspace = true
+exclude.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+# NOTE: keep the core dependencies minimal, pull in anything else through an optional feature.
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+flate2.workspace = true
+libc.workspace = true
+proxmox-time.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -7,6 +7,7 @@ members = [
     "proxmox-api-macro",
     "proxmox-apt",
     "proxmox-apt-api-types",
+    "proxmox-apt-history",
     "proxmox-async",
     "proxmox-auth-api",
     "proxmox-base64",
