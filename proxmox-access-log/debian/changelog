@@ -1,0 +1,5 @@
+rust-proxmox-access-log (0.1.0-1) trixie; urgency=medium
+
+  * initial version
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 23 Oct 2026 00:02:33 +0200

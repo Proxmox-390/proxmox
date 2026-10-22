@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "proxmox-access-control",
+    "proxmox-access-log",
     "proxmox-acme",
     "proxmox-acme-api",
     "proxmox-api-macro",

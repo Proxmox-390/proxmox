@@ -1,0 +1,19 @@
+[package]
+name = "proxmox-access-log"
+description = "Parser for the API access logs of Proxmox products"
+version = "0.1.0"
+
+authors.workspace = true
+edition.workspace = true
+exclude.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
