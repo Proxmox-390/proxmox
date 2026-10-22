@@ -12,6 +12,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dev-dependencies]
+proxmox-access-log.workspace = true
 proxmox-schema = { workspace = true, features = [ "api-macro" ] }
 tokio = { workspace = true, features = [ "test-util" ] }
 
