@@ -649,8 +649,32 @@ End-Date: 2026-10-02  07:34:10
         for entry in entries {
             let value = serde_json::to_value(&entry).expect("serializable entry");
 
+            #[cfg(feature = "api-types")]
+            <HistoryEntry as proxmox_schema::ApiType>::API_SCHEMA
+                .verify_json(&value)
+                .expect("entry matching its schema");
+
             let parsed: HistoryEntry = serde_json::from_value(value).expect("deserializable entry");
             assert_eq!(parsed, entry);
+        }
+    }
+
+    #[cfg(feature = "api-types")]
+    #[test]
+    fn perl_booleans() {
+        for (value, automatic) in [
+            (serde_json::json!(1), true),
+            (serde_json::json!(0), false),
+            (serde_json::json!(true), true),
+        ] {
+            let change: PackageChange = serde_json::from_value(serde_json::json!({
+                "action": "install",
+                "package": "foo",
+                "new-version": "1.0",
+                "automatic": value,
+            }))
+            .expect("deserializable change");
+            assert_eq!(change.automatic, automatic, "{value}");
         }
     }
 }

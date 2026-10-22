@@ -16,10 +16,17 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 # NOTE: keep the core dependencies minimal, pull in anything else through an optional feature.
 
+proxmox-schema = { workspace = true, optional = true, features = ["api-macro"] }
+proxmox-serde = { workspace = true, optional = true, features = ["perl"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 flate2.workspace = true
 libc.workspace = true
 proxmox-time.workspace = true
+
+[features]
+default = []
+api-types = ["dep:proxmox-schema", "dep:proxmox-serde"]
 
 [dev-dependencies]
 serde_json.workspace = true

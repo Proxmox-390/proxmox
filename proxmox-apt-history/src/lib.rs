@@ -7,7 +7,9 @@
 //! [`rotated_log_files`] and [`open_log_file`] for reading all of them.
 //!
 //! The parsers only need a minimal set of dependencies. They are not available on `wasm32`, where
-//! only the types are, for use in web UIs.
+//! only the types are, for use in web UIs. Optional features add more on top:
+//!
+//! - **`api-types`**: `proxmox-schema` API type derives.
 
 use std::io;
 use std::path::PathBuf;

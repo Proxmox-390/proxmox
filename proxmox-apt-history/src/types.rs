@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "api-types")]
+use proxmox_schema::api;
+
 /// What a transaction did to a package.
+#[cfg_attr(feature = "api-types", api)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PackageAction {
@@ -21,6 +25,14 @@ pub enum PackageAction {
 }
 
 /// A change to a single package in a transaction.
+#[cfg_attr(feature = "api-types", api(
+    properties: {
+        automatic: {
+            optional: true,
+            default: false,
+        },
+    },
+))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PackageChange {
@@ -41,6 +53,10 @@ pub struct PackageChange {
     /// Whether APT marked the newly installed package as installed automatically, i.e. as a
     /// dependency.
     #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(
+        feature = "api-types",
+        serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")
+    )]
     pub automatic: bool,
 }
 
@@ -57,6 +73,20 @@ fn is_zero(value: &u32) -> bool {
 ///
 /// APT logs local time with second resolution, so if the clock was set back during a transaction,
 /// for example at the end of daylight saving time, its end can lie before its start.
+#[cfg_attr(feature = "api-types", api(
+    properties: {
+        "start-index": {
+            optional: true,
+            default: 0,
+        },
+        packages: {
+            type: Array,
+            items: {
+                type: PackageChange,
+            },
+        },
+    },
+))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct HistoryEntry {
