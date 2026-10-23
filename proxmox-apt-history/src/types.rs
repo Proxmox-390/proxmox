@@ -121,6 +121,20 @@ pub struct HistoryEntry {
     pub packages: Vec<PackageChange>,
 }
 
+/// Format of the terminal output of a transaction.
+#[cfg_attr(feature = "api-types", api)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TermLogFormat {
+    /// Plain text.
+    #[default]
+    Plain,
+    /// Text with SGR escape sequences for bold, dim and the basic foreground colors other than
+    /// black and white. Each sets the complete style, starting with a reset, and no style spans a
+    /// line break.
+    Styled,
+}
+
 // Numbers are also accepted as strings, as Perl API handlers pass on query parameters as such.
 #[cfg(feature = "api-types")]
 #[api(

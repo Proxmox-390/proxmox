@@ -7,7 +7,8 @@
 //! [`rotated_log_files`] and [`open_log_file`] for reading all of them.
 //!
 //! The parsers only need a minimal set of dependencies. They are not available on `wasm32`, where
-//! only the types are, for use in web UIs. Optional features add more on top:
+//! only the types are, for use in web UIs, together with [`styled_segments`] for showing styled
+//! terminal output. Optional features add more on top:
 //!
 //! - **`api-types`**: `proxmox-schema` API type derives and `HistoryListOptions`.
 //! - **`impl`**: listing the history entries of the system and getting their terminal output, see
@@ -41,13 +42,16 @@ mod terminal;
 #[cfg(not(target_arch = "wasm32"))]
 pub use terminal::clean_terminal_output;
 
+mod style;
+pub use style::{StyledSegments, TextColor, TextStyle, styled_segments};
+
 #[cfg(not(target_arch = "wasm32"))]
 mod time;
 
 mod types;
 #[cfg(feature = "api-types")]
 pub use types::HistoryListOptions;
-pub use types::{HistoryEntry, PackageAction, PackageChange};
+pub use types::{HistoryEntry, PackageAction, PackageChange, TermLogFormat};
 
 /// Directory in which APT keeps its logs by default.
 pub const APT_LOG_DIR: &str = "/var/log/apt";

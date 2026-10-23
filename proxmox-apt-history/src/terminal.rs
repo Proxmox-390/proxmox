@@ -1,13 +1,16 @@
-/// Turns raw terminal output into plain text.
+use crate::TermLogFormat;
+use crate::style::TextStyle;
+
+/// Turns raw terminal output into text in the given format.
 ///
 /// Follows the cursor movements within a line, like a terminal does, for example for progress
 /// updates rewriting the line after a carriage return, or for backspaces. Moving the cursor to
 /// another line, as full-screen dialogs do, starts a new line, which keeps their content readable
 /// in the flow of the text. Removes trailing whitespace, blank lines at the start and the end, and
-/// collapses runs of blank lines into one. Drops other terminal control sequences, like the ones
-/// for colors, and other control characters except tabs.
-pub fn clean_terminal_output(raw: &str) -> String {
-    let mut text = TextWriter::with_capacity(raw.len());
+/// collapses runs of blank lines into one. Drops other terminal control sequences, except for the
+/// colors and text styles kept in the styled format, and other control characters except tabs.
+pub fn clean_terminal_output(raw: &str, format: TermLogFormat) -> String {
+    let mut text = TextWriter::new(format, raw.len());
     let mut chars = raw.chars();
 
     while let Some(c) = chars.next() {
@@ -69,10 +72,12 @@ const MAX_COLUMN: usize = 1000;
 
 /// Writes terminal output as text, line by line.
 struct TextWriter {
+    format: TermLogFormat,
     output: String,
-    /// The line the cursor is on.
-    line: Vec<char>,
+    /// The line the cursor is on, with the style of each character.
+    line: Vec<(char, TextStyle)>,
     column: usize,
+    style: TextStyle,
     /// The row the cursor got moved to last, if any, as counted by the terminal.
     row: Option<usize>,
     /// Whether a blank line is due before the next line with content.
@@ -80,11 +85,13 @@ struct TextWriter {
 }
 
 impl TextWriter {
-    fn with_capacity(capacity: usize) -> Self {
+    fn new(format: TermLogFormat, capacity: usize) -> Self {
         Self {
+            format,
             output: String::with_capacity(capacity),
             line: Vec::new(),
             column: 0,
+            style: TextStyle::default(),
             row: None,
             blank_line: false,
         }
@@ -93,10 +100,10 @@ impl TextWriter {
     /// Writes a character at the cursor position, replacing any there.
     fn put(&mut self, c: char) {
         if self.column < self.line.len() {
-            self.line[self.column] = c;
+            self.line[self.column] = (c, self.style);
         } else {
-            self.line.resize(self.column, ' ');
-            self.line.push(c);
+            self.line.resize(self.column, (' ', TextStyle::default()));
+            self.line.push((c, self.style));
         }
         self.column += 1;
     }
@@ -132,7 +139,11 @@ impl TextWriter {
 
     /// Writes the current line to the output and starts a new one.
     fn end_line(&mut self, line_break: bool) {
-        while self.line.last().is_some_and(|c| *c == ' ' || *c == '\t') {
+        while self
+            .line
+            .last()
+            .is_some_and(|(c, _)| *c == ' ' || *c == '\t')
+        {
             self.line.pop();
         }
 
@@ -142,7 +153,17 @@ impl TextWriter {
             if std::mem::take(&mut self.blank_line) {
                 self.output.push('\n');
             }
-            self.output.extend(self.line.drain(..));
+            let mut style = TextStyle::default();
+            for (c, char_style) in self.line.drain(..) {
+                if self.format == TermLogFormat::Styled && char_style != style {
+                    char_style.write_sgr(&mut self.output);
+                    style = char_style;
+                }
+                self.output.push(c);
+            }
+            if style != TextStyle::default() {
+                TextStyle::default().write_sgr(&mut self.output);
+            }
             if line_break {
                 self.output.push('\n');
             }
@@ -159,6 +180,7 @@ impl TextWriter {
         let mut number = || numbers.next().unwrap_or(1);
 
         match action {
+            'm' => self.style.apply_sgr(params),
             // cursor position, starting a new line if the row changes
             'H' | 'f' => {
                 self.change_row(Some(number()));
@@ -186,7 +208,7 @@ impl TextWriter {
                 "" | "0" => self.line.truncate(self.column),
                 "1" => {
                     let end = self.line.len().min(self.column + 1);
-                    self.line[..end].fill(' ');
+                    self.line[..end].fill((' ', TextStyle::default()));
                 }
                 "2" => self.line.clear(),
                 _ => (),
@@ -200,72 +222,62 @@ impl TextWriter {
 mod tests {
     use super::*;
 
+    fn plain(raw: &str) -> String {
+        clean_terminal_output(raw, TermLogFormat::Plain)
+    }
+
+    fn styled(raw: &str) -> String {
+        clean_terminal_output(raw, TermLogFormat::Styled)
+    }
+
     #[test]
     fn clean_output() {
-        assert_eq!(clean_terminal_output(""), "");
-        assert_eq!(clean_terminal_output("no newline"), "no newline");
-        assert_eq!(clean_terminal_output("a\r\n\r\nb\n"), "a\n\nb\n");
-        assert_eq!(clean_terminal_output("10%\r20%\rdone\r\r\n"), "done\n");
-        assert_eq!(clean_terminal_output("\x1b[0;1;39mbold\x1b[0m\n"), "bold\n");
-        assert_eq!(
-            clean_terminal_output("\x1b]0;title\x07a\x1b]0;title\x1b\\b\n"),
-            "ab\n"
-        );
-        assert_eq!(clean_terminal_output("\x1b(Ba\x1b7b\x07c\td\n"), "abc\td\n");
+        assert_eq!(plain(""), "");
+        assert_eq!(plain("no newline"), "no newline");
+        assert_eq!(plain("a\r\n\r\nb\n"), "a\n\nb\n");
+        assert_eq!(plain("10%\r20%\rdone\r\r\n"), "done\n");
+        assert_eq!(plain("\x1b[0;1;39mbold\x1b[0m\n"), "bold\n");
+        assert_eq!(plain("\x1b]0;title\x07a\x1b]0;title\x1b\\b\n"), "ab\n");
+        assert_eq!(plain("\x1b(Ba\x1b7b\x07c\td\n"), "abc\td\n");
     }
 
     #[test]
     fn cursor_movements_in_line() {
         // like a terminal, shorter updates only replace the start of the line
-        assert_eq!(clean_terminal_output("abcdef\rxy\n"), "xycdef\n");
-        assert_eq!(clean_terminal_output("abcdef\rxy\x1b[K\n"), "xy\n");
-        assert_eq!(clean_terminal_output("abcdef\x1b[3D\x1b[1Kx\n"), "   xef\n");
-        assert_eq!(clean_terminal_output("abcdef\x1b[2K\n"), "");
+        assert_eq!(plain("abcdef\rxy\n"), "xycdef\n");
+        assert_eq!(plain("abcdef\rxy\x1b[K\n"), "xy\n");
+        assert_eq!(plain("abcdef\x1b[3D\x1b[1Kx\n"), "   xef\n");
+        assert_eq!(plain("abcdef\x1b[2K\n"), "");
         // erasing a character like shells do
-        assert_eq!(clean_terminal_output("abc\x08 \x08\n"), "ab\n");
-        assert_eq!(clean_terminal_output("a\x1b[3Cb\x1b[2Gc\n"), "ac  b\n");
-        assert_eq!(
-            clean_terminal_output("a\x1b[99999999999Gb\n").len(),
-            MAX_COLUMN + 2
-        );
+        assert_eq!(plain("abc\x08 \x08\n"), "ab\n");
+        assert_eq!(plain("a\x1b[3Cb\x1b[2Gc\n"), "ac  b\n");
+        assert_eq!(plain("a\x1b[99999999999Gb\n").len(), MAX_COLUMN + 2);
     }
 
     #[test]
     fn vertical_cursor_movements() {
         // each row change starts a new line, keeping the column
+        assert_eq!(plain("\x1b[1;1Hfirst\x1b[1B\rsecond\n"), "first\nsecond\n");
+        assert_eq!(plain("\x1b[2;1Hsecond\x1b[1A\rfirst\n"), "second\nfirst\n");
         assert_eq!(
-            clean_terminal_output("\x1b[1;1Hfirst\x1b[1B\rsecond\n"),
-            "first\nsecond\n"
-        );
-        assert_eq!(
-            clean_terminal_output("\x1b[2;1Hsecond\x1b[1A\rfirst\n"),
-            "second\nfirst\n"
-        );
-        assert_eq!(
-            clean_terminal_output("ab\x1b[Bc\x1b[Ed\x1b[Fe\x1b[5df\n"),
+            plain("ab\x1b[Bc\x1b[Ed\x1b[Fe\x1b[5df\n"),
             "ab\n  c\nd\ne\n f\n"
         );
-        assert_eq!(
-            clean_terminal_output("ab\x1bDc\x1bEd\x1bMe\n"),
-            "ab\n  c\nd\n e\n"
-        );
+        assert_eq!(plain("ab\x1bDc\x1bEd\x1bMe\n"), "ab\n  c\nd\n e\n");
         // the cursor cannot move above the top row
-        assert_eq!(clean_terminal_output("\x1b[1;1Hab\x1b[A\rc\n"), "cb\n");
+        assert_eq!(plain("\x1b[1;1Hab\x1b[A\rc\n"), "cb\n");
     }
 
     #[test]
     fn bounded_padding() {
         let rows = 4 * MAX_COLUMN;
-        let output = clean_terminal_output(&"x\x1b[B".repeat(rows));
+        let output = plain(&"x\x1b[B".repeat(rows));
         assert!(output.len() <= rows * (MAX_COLUMN + 2));
     }
 
     #[test]
     fn blank_lines() {
-        assert_eq!(
-            clean_terminal_output("\n \r\na \n\n\t\n\nb\n\n\n"),
-            "a\n\nb\n"
-        );
+        assert_eq!(plain("\n \r\na \n\n\t\n\nb\n\n\n"), "a\n\nb\n");
     }
 
     #[test]
@@ -278,8 +290,27 @@ mod tests {
             "after\r\n",
         );
         assert_eq!(
-            clean_terminal_output(raw),
+            plain(raw),
             "before\n\n  \u{250c}\u{2500}\u{2510}\n  \u{2514}\u{2500}\u{2518}    x\nafter\n",
+        );
+    }
+
+    #[test]
+    fn styled_output() {
+        assert_eq!(
+            styled("\x1b[1mdpkg:\x1b[0m \x1b[1;33mwarning:\x1b[0m downgrading\r\n"),
+            "\x1b[0;1mdpkg:\x1b[0m \x1b[0;1;33mwarning:\x1b[0m downgrading\n",
+        );
+        assert_eq!(
+            styled("\x1b[31mred\nstill red\x1b[m\nplain\n"),
+            "\x1b[0;31mred\x1b[0m\n\x1b[0;31mstill red\x1b[0m\nplain\n",
+        );
+        // styles of characters that got replaced or trimmed do not matter
+        assert_eq!(styled("\x1b[44m   \x1b[0m\n"), "");
+        assert_eq!(styled("\x1b[32m10%\r\x1b[0m100%\n"), "100%\n");
+        assert_eq!(
+            styled("\x1b[1;97;41mdialog\x1b[0m\n"),
+            "\x1b[0;1mdialog\x1b[0m\n"
         );
     }
 }

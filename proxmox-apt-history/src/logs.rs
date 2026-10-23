@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     APT_LOG_DIR, Error, HISTORY_LOG_NAME, HistoryEntry, HistoryListOptions, HistoryParser,
-    TERM_LOG_NAME, TermLogParser, clean_terminal_output, open_log_file, rotated_log_files,
+    TERM_LOG_NAME, TermLogFormat, TermLogParser, clean_terminal_output, open_log_file,
+    rotated_log_files,
 };
 
 /// Lists the entries of the APT history log, including the rotated ones, newest first.
@@ -19,13 +20,17 @@ pub fn list_history(options: &HistoryListOptions) -> Result<Vec<HistoryEntry>, E
 }
 
 /// Returns the terminal output of the transaction with the given start time and start index, see
-/// [`HistoryEntry::start_index`], as plain text.
+/// [`HistoryEntry::start_index`], in the given format.
 ///
 /// Returns `None` if the terminal log has no output for it, for example because logrotate already
 /// removed it, or an error if a file that could contain it cannot be read or has damaged sections.
-pub fn get_term_log(start_time: i64, start_index: u32) -> Result<Option<String>, Error> {
+pub fn get_term_log(
+    start_time: i64,
+    start_index: u32,
+    format: TermLogFormat,
+) -> Result<Option<String>, Error> {
     let logs = open_logs(Path::new(APT_LOG_DIR), TERM_LOG_NAME)?;
-    get_term_log_from(logs, start_time, start_index)
+    get_term_log_from(logs, start_time, start_index, format)
 }
 
 type LogReader = Box<dyn BufRead + Send>;
@@ -121,6 +126,7 @@ fn get_term_log_from(
     logs: Vec<OpenedLog>,
     start_time: i64,
     start_index: u32,
+    format: TermLogFormat,
 ) -> Result<Option<String>, Error> {
     let mut first_error = None;
 
@@ -140,7 +146,7 @@ fn get_term_log_from(
                 Ok(section)
                     if section.start_time == start_time && section.start_index == start_index =>
                 {
-                    return Ok(Some(clean_terminal_output(&section.output)));
+                    return Ok(Some(clean_terminal_output(&section.output, format)));
                 }
                 Ok(_) => (),
                 // a damaged section could be the one looked for, so report it if none matches
@@ -415,7 +421,12 @@ Log ended: 2026-09-02  10:00:10
     #[test]
     fn find_term_log() {
         let get = |contents: &[Log], start_time, start_index| {
-            get_term_log_from(logs(contents), start_time, start_index)
+            get_term_log_from(
+                logs(contents),
+                start_time,
+                start_index,
+                TermLogFormat::Plain,
+            )
         };
         let all = [Log::Valid(TERM_LOG), Log::Valid(TERM_LOG_1)];
 
@@ -469,7 +480,9 @@ Log ended: damaged
 
     #[test]
     fn find_term_log_with_damaged_sections() {
-        let get = |contents: &[Log], start_time| get_term_log_from(logs(contents), start_time, 0);
+        let get = |contents: &[Log], start_time| {
+            get_term_log_from(logs(contents), start_time, 0, TermLogFormat::Plain)
+        };
 
         // not found, but a section that could be the one looked for is damaged
         let err = get(

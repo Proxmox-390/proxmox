@@ -143,7 +143,7 @@ impl<R: BufRead> Iterator for TermLogParser<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clean_terminal_output;
+    use crate::{TermLogFormat, clean_terminal_output};
 
     const TERM_LOG: &str = concat!(
         "\n",
@@ -183,7 +183,7 @@ mod tests {
                 .ends_with("Setting up pve-manager (9.2.2) ...\r\n")
         );
         assert_eq!(
-            clean_terminal_output(&sections[0].output),
+            clean_terminal_output(&sections[0].output, TermLogFormat::Plain),
             "(Reading database ... 54231 files and directories currently installed.)\n\
              Preparing to unpack .../pve-manager_9.2.2_amd64.deb ...\n\
              dpkg: warning: downgrading pve-manager:amd64\n\
@@ -254,5 +254,24 @@ mod tests {
         assert_eq!(sections.len(), 2);
         assert!(matches!(sections[0], Err(Error::Parse { line: 1, .. })));
         assert_eq!(sections[1].as_ref().expect("valid section").output, "bar\n");
+    }
+
+    #[test]
+    fn styled_output_matches_plain() {
+        let sections = TermLogParser::new(TERM_LOG.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid terminal log");
+        for section in sections {
+            let text: String = crate::styled_segments(&clean_terminal_output(
+                &section.output,
+                TermLogFormat::Styled,
+            ))
+            .map(|(_, text)| text)
+            .collect();
+            assert_eq!(
+                text,
+                clean_terminal_output(&section.output, TermLogFormat::Plain)
+            );
+        }
     }
 }
