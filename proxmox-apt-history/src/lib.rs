@@ -13,9 +13,13 @@
 //! - **`api-types`**: `proxmox-schema` API type derives and `HistoryListOptions`.
 //! - **`impl`**: listing the history entries of the system and getting their terminal output, see
 //!   `list_history` and `get_term_log`.
+//! - **`api`**: API methods for these, to be shared by the Rust based products, see `api`.
 
 use std::io;
 use std::path::PathBuf;
+
+#[cfg(all(feature = "api", not(target_arch = "wasm32")))]
+pub mod api;
 
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod logs;

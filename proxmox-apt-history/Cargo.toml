@@ -26,10 +26,26 @@ flate2.workspace = true
 libc.workspace = true
 proxmox-time.workspace = true
 
+anyhow = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt"] }
+
+proxmox-http-error = { workspace = true, optional = true }
+proxmox-router = { workspace = true, optional = true }
+
 [features]
 default = []
 api-types = ["dep:proxmox-schema", "dep:proxmox-serde"]
 impl = ["api-types", "dep:log"]
+api = [
+    "impl",
+    "dep:anyhow",
+    "dep:proxmox-http-error",
+    "dep:proxmox-router",
+    "dep:serde_json",
+    "dep:tokio",
+    "proxmox-schema/api-types",
+]
 
 [dev-dependencies]
 serde_json.workspace = true

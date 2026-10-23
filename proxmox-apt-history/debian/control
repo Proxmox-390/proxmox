@@ -31,6 +31,7 @@ Depends:
  librust-serde-1+derive-dev,
  librust-thiserror-2+default-dev
 Suggests:
+ librust-proxmox-apt-history+api-dev (= ${binary:Version}),
  librust-proxmox-apt-history+api-types-dev (= ${binary:Version}),
  librust-proxmox-apt-history+impl-dev (= ${binary:Version})
 Provides:
@@ -43,6 +44,29 @@ Provides:
  librust-proxmox-apt-history-0.1.0+default-dev (= ${binary:Version})
 Description: Parsers for the logs APT keeps about package changes - Rust source code
  Source code for Debianized Rust crate "proxmox-apt-history"
+
+Package: librust-proxmox-apt-history+api-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-apt-history-dev (= ${binary:Version}),
+ librust-proxmox-apt-history+impl-dev (= ${binary:Version}),
+ librust-anyhow-1+default-dev,
+ librust-proxmox-http-error-1+default-dev,
+ librust-proxmox-router-3+default-dev (>= 3.4.0-~~),
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+api-types-dev (>= 5.7.0-~~),
+ librust-serde-json-1+default-dev,
+ librust-tokio-1+default-dev (>= 1.6-~~),
+ librust-tokio-1+rt-dev (>= 1.6-~~)
+Provides:
+ librust-proxmox-apt-history-0+api-dev (= ${binary:Version}),
+ librust-proxmox-apt-history-0.1+api-dev (= ${binary:Version}),
+ librust-proxmox-apt-history-0.1.0+api-dev (= ${binary:Version})
+Description: Parsers for the logs APT keeps about package changes - feature "api"
+ This metapackage enables feature "api" for the Rust proxmox-apt-history crate,
+ by pulling in any additional dependencies needed by that feature.
 
 Package: librust-proxmox-apt-history+api-types-dev
 Architecture: any
