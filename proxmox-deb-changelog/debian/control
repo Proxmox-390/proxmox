@@ -1,0 +1,54 @@
+Source: rust-proxmox-deb-changelog
+Section: rust
+Priority: optional
+Build-Depends: debhelper-compat (= 13),
+ dh-sequence-cargo
+Build-Depends-Arch: cargo:native <!nocheck>,
+ rustc:native (>= 1.88) <!nocheck>,
+ libstd-rust-dev <!nocheck>,
+ librust-proxmox-deb-version-0.1+default-dev (>= 0.1.1-~~) <!nocheck>,
+ librust-serde-1+default-dev <!nocheck>,
+ librust-serde-1+derive-dev <!nocheck>
+Maintainer: Proxmox Support Team <support@proxmox.com>
+Standards-Version: 4.7.2
+Vcs-Git: git://git.proxmox.com/git/proxmox.git
+Vcs-Browser: https://git.proxmox.com/?p=proxmox.git
+Homepage: https://proxmox.com
+X-Cargo-Crate: proxmox-deb-changelog
+
+Package: librust-proxmox-deb-changelog-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-deb-version-0.1+default-dev (>= 0.1.1-~~),
+ librust-serde-1+default-dev,
+ librust-serde-1+derive-dev
+Suggests:
+ librust-proxmox-deb-changelog+api-types-dev (= ${binary:Version})
+Provides:
+ librust-proxmox-deb-changelog+default-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0+default-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1+default-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1.0-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1.0+default-dev (= ${binary:Version})
+Description: Parser for Debian changelogs - Rust source code
+ Source code for Debianized Rust crate "proxmox-deb-changelog"
+
+Package: librust-proxmox-deb-changelog+api-types-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-deb-changelog-dev (= ${binary:Version}),
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~)
+Provides:
+ librust-proxmox-deb-changelog-0+api-types-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1+api-types-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1.0+api-types-dev (= ${binary:Version})
+Description: Parser for Debian changelogs - feature "api-types"
+ This metapackage enables feature "api-types" for the Rust proxmox-deb-changelog
+ crate, by pulling in any additional dependencies needed by that feature.
