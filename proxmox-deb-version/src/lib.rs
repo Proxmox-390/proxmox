@@ -83,7 +83,7 @@ pub enum ParseError {
 /// assert_eq!(v1.upstream(), "2.0.3");
 /// assert_eq!(v1.revision(), Some("1"));
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
 pub struct Version {
@@ -186,6 +186,15 @@ impl Ord for Version {
         cmp_version_parts(&self.as_parts(), &other.as_parts())
     }
 }
+
+/// Versions are equal if they compare as equal, like `1.01` and `1.1`, or `1.0` and `1.0-0`.
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Version {}
 
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -403,6 +412,7 @@ mod tests {
             ("1.0", "1.0-0", Ordering::Equal),
             ("1.0", "1.0-0~bpo1", Ordering::Greater),
             ("1.0-0~bpo1", "1.0", Ordering::Less),
+            ("1.01", "1.1", Ordering::Equal),
             ("1:1.0", "1.0", Ordering::Greater),
             ("1.0~rc1", "1.0", Ordering::Less),
             ("1.0~~", "1.0~", Ordering::Less),
@@ -436,6 +446,7 @@ mod tests {
             let ver1: Version = v1.parse().unwrap();
             let ver2: Version = v2.parse().unwrap();
             assert_eq!(ver1.cmp(&ver2), expected, "{v1} vs {v2}");
+            assert_eq!(ver1 == ver2, expected == Ordering::Equal, "{v1} == {v2}");
 
             // just to be sure check also the non-allocating function to behave the same way.
             assert_eq!(cmp_versions(v1, v2).unwrap(), expected, "{v1} vs {v2}");
