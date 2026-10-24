@@ -253,12 +253,9 @@ fn cmp_version_parts(a: &VersionParts, b: &VersionParts) -> Ordering {
     a.epoch
         .cmp(&b.epoch)
         .then_with(|| debian_cmp_str(a.upstream, b.upstream))
-        .then_with(|| match (a.revision, b.revision) {
-            (Some(a_rev), Some(b_rev)) => debian_cmp_str(a_rev, b_rev),
-            (Some(_), None) => Ordering::Greater,
-            (None, Some(_)) => Ordering::Less,
-            (None, None) => Ordering::Equal,
-        })
+        // like dpkg, compare a missing revision as an empty one, which equals "0" and is newer than
+        // "0~bpo1", for example
+        .then_with(|| debian_cmp_str(a.revision.unwrap_or(""), b.revision.unwrap_or("")))
 }
 
 /// Implements the Debian version sorting algorithm as per the deb-version manpage.
@@ -401,7 +398,11 @@ mod tests {
             ("1.0.0", "1.0", Ordering::Greater), // and vice versa
             ("1.0", "1.1", Ordering::Less),
             ("1.0-1", "1.0-2", Ordering::Less),
-            ("1.0", "1.0-1", Ordering::Less), // no-revsion < has-revision
+            ("1.0", "1.0-1", Ordering::Less),
+            // a missing revision compares like an empty one, as in dpkg
+            ("1.0", "1.0-0", Ordering::Equal),
+            ("1.0", "1.0-0~bpo1", Ordering::Greater),
+            ("1.0-0~bpo1", "1.0", Ordering::Less),
             ("1:1.0", "1.0", Ordering::Greater),
             ("1.0~rc1", "1.0", Ordering::Less),
             ("1.0~~", "1.0~", Ordering::Less),
