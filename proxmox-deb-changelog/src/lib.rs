@@ -1,9 +1,12 @@
 //! Parser for Debian changelogs, as kept in the `debian/changelog` file of a source package and
 //! installed with its binary packages, see [deb-changelog].
 //!
-//! The parser only needs a minimal set of dependencies. Optional features add more on top:
+//! The parser only needs a minimal set of dependencies. Optional features add more on top, the
+//! latter two are not available on `wasm32`:
 //!
 //! - **`api-types`**: `proxmox-schema` API type derives.
+//! - **`impl`**: reading the changelogs of installed packages, see `read_installed_changelog`.
+//! - **`api`**: an API method for that, to be shared by the Rust based products, see `api`.
 //!
 //! [deb-changelog]: https://manpages.debian.org/stable/dpkg-dev/deb-changelog.5.en.html
 
@@ -15,6 +18,14 @@ use proxmox_deb_version::{InvalidVersion, cmp_versions, validate_version};
 
 #[cfg(feature = "api-types")]
 use proxmox_schema::api;
+
+#[cfg(all(feature = "api", not(target_arch = "wasm32")))]
+pub mod api;
+
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+mod installed;
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+pub use installed::{DOC_DIR, Error, read_installed_changelog};
 
 /// An entry of a Debian changelog, i.e. the changes of one version of a source package.
 #[cfg_attr(feature = "api-types", api)]

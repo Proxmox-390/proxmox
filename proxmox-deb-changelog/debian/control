@@ -25,7 +25,9 @@ Depends:
  librust-serde-1+default-dev,
  librust-serde-1+derive-dev
 Suggests:
- librust-proxmox-deb-changelog+api-types-dev (= ${binary:Version})
+ librust-proxmox-deb-changelog+api-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog+api-types-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog+impl-dev (= ${binary:Version})
 Provides:
  librust-proxmox-deb-changelog+default-dev (= ${binary:Version}),
  librust-proxmox-deb-changelog-0-dev (= ${binary:Version}),
@@ -36,6 +38,30 @@ Provides:
  librust-proxmox-deb-changelog-0.1.0+default-dev (= ${binary:Version})
 Description: Parser for Debian changelogs - Rust source code
  Source code for Debianized Rust crate "proxmox-deb-changelog"
+
+Package: librust-proxmox-deb-changelog+api-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-deb-changelog-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog+api-types-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog+impl-dev (= ${binary:Version}),
+ librust-anyhow-1+default-dev,
+ librust-proxmox-http-error-1+default-dev,
+ librust-proxmox-router-3+default-dev (>= 3.4.0-~~),
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+api-types-dev (>= 5.7.0-~~),
+ librust-serde-json-1+default-dev,
+ librust-tokio-1+default-dev (>= 1.6-~~),
+ librust-tokio-1+rt-dev (>= 1.6-~~)
+Provides:
+ librust-proxmox-deb-changelog-0+api-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1+api-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1.0+api-dev (= ${binary:Version})
+Description: Parser for Debian changelogs - feature "api"
+ This metapackage enables feature "api" for the Rust proxmox-deb-changelog
+ crate, by pulling in any additional dependencies needed by that feature.
 
 Package: librust-proxmox-deb-changelog+api-types-dev
 Architecture: any
@@ -51,4 +77,20 @@ Provides:
  librust-proxmox-deb-changelog-0.1.0+api-types-dev (= ${binary:Version})
 Description: Parser for Debian changelogs - feature "api-types"
  This metapackage enables feature "api-types" for the Rust proxmox-deb-changelog
+ crate, by pulling in any additional dependencies needed by that feature.
+
+Package: librust-proxmox-deb-changelog+impl-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-deb-changelog-dev (= ${binary:Version}),
+ librust-flate2-1+default-dev,
+ librust-thiserror-2+default-dev
+Provides:
+ librust-proxmox-deb-changelog-0+impl-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1+impl-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1.0+impl-dev (= ${binary:Version})
+Description: Parser for Debian changelogs - feature "impl"
+ This metapackage enables feature "impl" for the Rust proxmox-deb-changelog
  crate, by pulling in any additional dependencies needed by that feature.
