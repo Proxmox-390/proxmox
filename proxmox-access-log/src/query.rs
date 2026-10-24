@@ -11,6 +11,10 @@ use std::time::Duration;
 use anyhow::{Error, bail, format_err};
 
 use crate::reader::{Line, LineReader, MAX_LINE_LENGTH, parse_line};
+use crate::stats::{
+    AccessLogStats, CoveredRange, DEFAULT_STATS_RANGE, DEFAULT_STATS_TOP, MAX_HISTOGRAM_BUCKETS,
+    MAX_STATS_TOP, StatsOptions, StopReason, Tally,
+};
 use crate::{
     AccessLogEntry, AccessLogFilter, DEFAULT_LIMIT, Gap, GapReason, LogFormat, MAX_CURSOR_LENGTH,
     MAX_LIMIT, Prefix, QueryResult,
@@ -223,6 +227,180 @@ pub fn query_newer(
     query_with_limits(path, format, filter, limit, Direction::Newer(head), &LIMITS)
 }
 
+/// Counts the requests of a log and its rotated copies that match a filter, within its time range.
+///
+/// The range defaults to the last [`DEFAULT_STATS_RANGE`] seconds before `until`, which defaults
+/// to now, and the lists hold the `top` values with the most requests, [`DEFAULT_STATS_TOP`] if
+/// not set. The histogram has buckets of `bucket` seconds, aligned to multiples of it since the
+/// epoch, or of a length that makes at most [`MAX_HISTOGRAM_BUCKETS`] of them.
+///
+/// The counting goes through the files like pages of [`query`] do, from the end of the log on,
+/// and reads as much as one page at most. Lines are not ordered by their timestamps, so it cannot
+/// stop at the start of the range, and reads on until all files are done or the budget is used
+/// up. The covered parts of the files tell how far it got, as it counts the lines of a compressed
+/// copy only once it got through all of it, and stops at a damaged copy. Invalid parameters fail
+/// with [`InvalidRequest`].
+pub fn stats(
+    path: &Path,
+    format: LogFormat,
+    filter: &AccessLogFilter,
+    options: StatsOptions,
+) -> Result<AccessLogStats, Error> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since_epoch| since_epoch.as_secs() as i64);
+    stats_with_limits(path, format, filter, options, now, &LIMITS)
+}
+
+fn stats_with_limits(
+    path: &Path,
+    format: LogFormat,
+    filter: &AccessLogFilter,
+    options: StatsOptions,
+    now: i64,
+    limits: &Limits,
+) -> Result<AccessLogStats, Error> {
+    let top = options.top.unwrap_or(DEFAULT_STATS_TOP);
+    if !(1..=MAX_STATS_TOP).contains(&top) {
+        return Err(invalid(format!(
+            "access log statistics top must be between 1 and {MAX_STATS_TOP}"
+        )));
+    }
+    let until = filter.until.unwrap_or(now);
+    let since = filter
+        .since
+        .unwrap_or_else(|| until.saturating_sub(DEFAULT_STATS_RANGE));
+    if since > until {
+        return Err(invalid("access log statistics range starts after it ends"));
+    }
+    let bucket = histogram_bucket(since, until, options.bucket)?;
+    let filter = AccessLogFilter {
+        since: Some(since),
+        until: Some(until),
+        ..filter.clone()
+    };
+
+    let files = open_log_files(path)?;
+    let mut scan = Scan::new(&filter, format, limits);
+    let mut tally = Tally::new(since, until, bucket, format);
+
+    let mut covered = Vec::new();
+    let mut stopped = None;
+    for file in &files {
+        let reached = match file.compressed {
+            true => match scan.tally_compressed(file, &mut tally)? {
+                Ok(end) => Ok(0..end),
+                Err(reason) => Err((None, reason)),
+            },
+            false => match scan.scan_plain(
+                file,
+                Position::End,
+                0,
+                &mut Output::Statistics(&mut tally),
+            )? {
+                Outcome::Done => Ok(0..scan.lines_end.unwrap_or(0)),
+                Outcome::Stopped { position, reason } => {
+                    let reached = match position {
+                        Position::Line(start) | Position::WithinLine(start) => {
+                            Some(start..scan.lines_end.unwrap_or(file.len))
+                        }
+                        Position::End => None,
+                    };
+                    Err((reached, reason.into()))
+                }
+                Outcome::NotStarted => Err((None, StopReason::ReadBudget)),
+            },
+        };
+        let range = |range: std::ops::Range<u64>| CoveredRange {
+            file: file.name(),
+            start: range.start,
+            end: range.end,
+        };
+        match reached {
+            Ok(reached) if !reached.is_empty() => covered.push(range(reached)),
+            Ok(_) => {}
+            Err((reached, reason)) => {
+                covered.extend(reached.filter(|reached| !reached.is_empty()).map(range));
+                stopped = Some(reason);
+                break;
+            }
+        }
+    }
+
+    let finished = tally.finish(top as usize);
+    Ok(AccessLogStats {
+        since,
+        until,
+        complete: stopped.is_none() && scan.gaps.is_empty(),
+        stopped,
+        covered,
+        searched_back_to: scan.searched_back_to,
+        invalid_lines: scan.invalid_lines,
+        gaps: scan.gaps,
+        total: finished.total,
+        histogram: finished.histogram,
+        clients: finished.clients,
+        auth_ids: finished.auth_ids,
+        path_groups: finished.path_groups,
+        statuses: finished.statuses,
+        user_agents: finished.user_agents,
+    })
+}
+
+/// The bucket length of a histogram of the range from `since` to `until`.
+fn histogram_bucket(since: i64, until: i64, bucket: Option<u64>) -> Result<u64, Error> {
+    // in i128, as the range can span all of i64, and so can the aligned start of the buckets
+    let fits = |bucket: u64| {
+        let Ok(bucket) = i64::try_from(bucket) else {
+            return false;
+        };
+        if bucket == 0 {
+            return false;
+        }
+        let first = i128::from(since.div_euclid(bucket));
+        let count = i128::from(until.div_euclid(bucket)) - first + 1;
+        count <= i128::from(MAX_HISTOGRAM_BUCKETS)
+            && first * i128::from(bucket) >= i128::from(i64::MIN)
+    };
+    if let Some(bucket) = bucket {
+        if !fits(bucket) {
+            return Err(invalid(format!(
+                "access log statistics bucket must be positive, for at most \
+                {MAX_HISTOGRAM_BUCKETS} buckets"
+            )));
+        }
+        return Ok(bucket);
+    }
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    for bucket in [
+        MINUTE,
+        5 * MINUTE,
+        10 * MINUTE,
+        15 * MINUTE,
+        30 * MINUTE,
+        HOUR,
+        2 * HOUR,
+        3 * HOUR,
+        6 * HOUR,
+        12 * HOUR,
+        DAY,
+    ] {
+        if fits(bucket) {
+            return Ok(bucket);
+        }
+    }
+    let mut bucket = DAY;
+    while !fits(bucket) {
+        bucket = bucket
+            .checked_mul(2)
+            .filter(|bucket| *bucket <= i64::MAX as u64)
+            .ok_or_else(|| invalid("access log statistics range is too long"))?;
+    }
+    Ok(bucket)
+}
+
 /// Where a page goes: towards older entries, from the end or a cursor on, or towards the end of the
 /// log, from a head cursor on.
 #[derive(Clone, Copy)]
@@ -251,19 +429,13 @@ fn query_with_limits(
     };
 
     let files = open_log_files(path)?;
-    let mut page = Page {
-        filter,
-        format,
+    let mut page = Scan::new(filter, format, limits);
+    let mut entries = Entries {
         limit: limit as usize,
-        limits,
-        read: 0,
-        parsed: 0,
-        entries: Vec::new(),
-        entry_bytes: 0,
-        searched_back_to: None,
-        invalid_lines: 0,
-        gaps: Vec::new(),
+        values: Vec::new(),
+        bytes: 0,
     };
+    let mut output = Output::Entries(&mut entries);
 
     // the end of the log at the start of the page, as it can grow while reading it
     let head_cursor = match cursor {
@@ -271,7 +443,16 @@ fn query_with_limits(
         Some(_) => None,
     };
     if let Some(head) = head {
-        return page.newer(&files, &head, head_cursor);
+        let complete = page.newer(&files, &head, &mut output)?;
+        return Ok(QueryResult {
+            complete: complete && page.gaps.is_empty(),
+            entries: entries.values,
+            next_cursor: None,
+            head_cursor: head_cursor.map(|head| head.to_string()),
+            gaps: page.gaps,
+            searched_back_to: page.searched_back_to,
+            invalid_lines: page.invalid_lines,
+        });
     }
 
     let (first, mut start) = match &cursor {
@@ -282,13 +463,13 @@ fn query_with_limits(
     let mut stop = None;
     for (index, file) in files.iter().enumerate().skip(first) {
         let outcome = match file.compressed {
-            true => page.scan_compressed(file, start, 0)?,
-            false => page.scan_plain(file, start, 0)?,
+            true => page.scan_compressed(file, start, 0, &mut output)?,
+            false => page.scan_plain(file, start, 0, &mut output)?,
         };
         start = Position::End;
         match outcome {
             Outcome::Done => {}
-            Outcome::Stopped(position) => {
+            Outcome::Stopped { position, .. } => {
                 stop = Some((index, position));
                 break;
             }
@@ -308,7 +489,7 @@ fn query_with_limits(
 
     Ok(QueryResult {
         complete: next_cursor.is_none() && !gap,
-        entries: page.entries,
+        entries: entries.values,
         next_cursor,
         head_cursor: head_cursor.map(|head| head.to_string()),
         gaps: page.gaps,
@@ -408,7 +589,10 @@ enum Outcome {
     /// It got to the start of the file.
     Done,
     /// The page is full or out of budget, and continues before this position.
-    Stopped(Position),
+    Stopped {
+        position: Position,
+        reason: ScanStop,
+    },
     /// The budget left was not enough to start reading the file.
     NotStarted,
 }
@@ -530,26 +714,66 @@ enum Look {
     /// The line is dealt with, continue with the next older one.
     Continue,
     /// Stop without taking the line, so the next page starts with it.
-    Deferred,
+    Deferred(ScanStop),
     /// The line was taken and filled the page, so the next page starts with the next older one.
     PageFull,
 }
 
-struct Page<'a> {
+#[derive(Clone, Copy)]
+enum ScanStop {
+    ReadBudget,
+    ParseBudget,
+    Entries,
+}
+
+impl From<ScanStop> for StopReason {
+    fn from(reason: ScanStop) -> Self {
+        match reason {
+            ScanStop::ReadBudget => Self::ReadBudget,
+            ScanStop::ParseBudget => Self::ParseBudget,
+            ScanStop::Entries => unreachable!("statistics do not retain entries"),
+        }
+    }
+}
+
+struct Entries {
+    limit: usize,
+    values: Vec<AccessLogEntry>,
+    bytes: usize,
+}
+
+enum Output<'a> {
+    Entries(&'a mut Entries),
+    Statistics(&'a mut Tally),
+}
+
+struct Scan<'a> {
     filter: &'a AccessLogFilter,
     format: LogFormat,
-    limit: usize,
     limits: &'a Limits,
     read: u64,
     parsed: u64,
-    entries: Vec<AccessLogEntry>,
-    entry_bytes: usize,
     searched_back_to: Option<i64>,
     invalid_lines: u64,
     gaps: Vec<Gap>,
+    /// Where the last complete line ends in the file last read from its end, once found.
+    lines_end: Option<u64>,
 }
 
-impl Page<'_> {
+impl<'a> Scan<'a> {
+    fn new(filter: &'a AccessLogFilter, format: LogFormat, limits: &'a Limits) -> Self {
+        Self {
+            filter,
+            format,
+            limits,
+            read: 0,
+            parsed: 0,
+            searched_back_to: None,
+            invalid_lines: 0,
+            gaps: Vec::new(),
+            lines_end: None,
+        }
+    }
     fn note_time(&mut self, time: i64) {
         self.searched_back_to = Some(
             self.searched_back_to
@@ -569,7 +793,7 @@ impl Page<'_> {
     }
 
     /// Looks at a complete line, without its terminator.
-    fn look_at(&mut self, line: &[u8]) -> Look {
+    fn look_at(&mut self, line: &[u8], output: &mut Output) -> Look {
         if let Some(time) = self.skim(line) {
             self.note_time(time);
             return Look::Continue;
@@ -577,7 +801,7 @@ impl Page<'_> {
 
         let len = line.len() as u64;
         if self.parsed + len > self.limits.parse {
-            return Look::Deferred;
+            return Look::Deferred(ScanStop::ParseBudget);
         }
         let entry = match parse_line(line, self.format) {
             Ok(entry) => entry,
@@ -588,24 +812,28 @@ impl Page<'_> {
             }
         };
 
+        let time = entry.time;
+        let mut next = Look::Continue;
         if self.filter.matches(&entry, self.format) {
-            let size = entry_size(&entry);
-            // Always take one, as lossy decoding can make an entry larger than the limit.
-            if !self.entries.is_empty() && self.entry_bytes + size > self.limits.entries {
-                return Look::Deferred;
+            match output {
+                Output::Statistics(tally) => tally.add(&entry),
+                Output::Entries(entries) => {
+                    let size = entry_size(&entry);
+                    // Always take one, as lossy decoding can make an entry larger than the limit.
+                    if !entries.values.is_empty() && entries.bytes + size > self.limits.entries {
+                        return Look::Deferred(ScanStop::Entries);
+                    }
+                    entries.bytes += size;
+                    entries.values.push(entry);
+                    if entries.values.len() >= entries.limit {
+                        next = Look::PageFull;
+                    }
+                }
             }
-            self.parsed += len;
-            self.note_time(entry.time);
-            self.entry_bytes += size;
-            self.entries.push(entry);
-            if self.entries.len() >= self.limit {
-                return Look::PageFull;
-            }
-        } else {
-            self.parsed += len;
-            self.note_time(entry.time);
         }
-        Look::Continue
+        self.parsed += len;
+        self.note_time(time);
+        next
     }
 
     /// Whether the page read nothing yet, so it always has the budget to get further.
@@ -619,6 +847,7 @@ impl Page<'_> {
         file: &LogFile,
         start: Position,
         floor: u64,
+        output: &mut Output,
     ) -> Result<Outcome, Error> {
         let fresh = self.fresh();
         let read_at = |buf: &mut [u8], offset: u64| {
@@ -645,6 +874,10 @@ impl Page<'_> {
         };
         // Unknown until the first complete line boundary is found.
         let mut oldest = matches!(start, Position::Line(_)).then_some(end);
+        let from_end = start == Position::End;
+        if from_end {
+            self.lines_end = None;
+        }
         // the part of a line that continues above the current window, with its line terminator
         let mut tail = Vec::new();
 
@@ -655,9 +888,15 @@ impl Page<'_> {
             let size = end - start + extra;
             if self.read + size > self.limits.read {
                 return Ok(match (dropping, oldest) {
-                    (false, Some(oldest)) => Outcome::Stopped(Position::Line(oldest)),
+                    (false, Some(oldest)) => Outcome::Stopped {
+                        position: Position::Line(oldest),
+                        reason: ScanStop::ReadBudget,
+                    },
                     (_, None) if !fresh => Outcome::NotStarted,
-                    _ => Outcome::Stopped(Position::WithinLine(end)),
+                    _ => Outcome::Stopped {
+                        position: Position::WithinLine(end),
+                        reason: ScanStop::ReadBudget,
+                    },
                 });
             }
             self.read += size;
@@ -672,6 +911,9 @@ impl Page<'_> {
                         dropping = false;
                         // An oversized line was already counted; an unterminated tail is ignored.
                         oldest = Some(start - extra + last as u64 + 1);
+                        if from_end && self.lines_end.is_none() {
+                            self.lines_end = oldest;
+                        }
                     }
                     None => region.clear(),
                 }
@@ -695,11 +937,19 @@ impl Page<'_> {
                 if line.len() > MAX_LINE_LENGTH + 1 {
                     self.invalid_lines += 1;
                 } else {
-                    match self.look_at(&line[..line.len() - 1]) {
+                    match self.look_at(&line[..line.len() - 1], output) {
                         Look::Continue => {}
-                        Look::Deferred => return Ok(Outcome::Stopped(Position::Line(line_end))),
+                        Look::Deferred(reason) => {
+                            return Ok(Outcome::Stopped {
+                                position: Position::Line(line_end),
+                                reason,
+                            });
+                        }
                         Look::PageFull => {
-                            return Ok(Outcome::Stopped(Position::Line(line_start)));
+                            return Ok(Outcome::Stopped {
+                                position: Position::Line(line_start),
+                                reason: ScanStop::Entries,
+                            });
                         }
                     }
                 }
@@ -731,6 +981,7 @@ impl Page<'_> {
         file: &LogFile,
         start: Position,
         floor: u64,
+        output: &mut Output,
     ) -> Result<Outcome, Error> {
         let fresh = self.fresh();
         // a position within a line too long to read stems from before compressing the file
@@ -793,19 +1044,30 @@ impl Page<'_> {
             }
             match item.line {
                 None => self.invalid_lines += 1,
-                Some(line) => match self.look_at(&line) {
+                Some(line) => match self.look_at(&line, output) {
                     Look::Continue => {}
-                    Look::Deferred => {
-                        return Ok(Outcome::Stopped(Position::Line(item.offset + item.len)));
+                    Look::Deferred(reason) => {
+                        return Ok(Outcome::Stopped {
+                            position: Position::Line(item.offset + item.len),
+                            reason,
+                        });
                     }
-                    Look::PageFull => return Ok(Outcome::Stopped(Position::Line(item.offset))),
+                    Look::PageFull => {
+                        return Ok(Outcome::Stopped {
+                            position: Position::Line(item.offset),
+                            reason: ScanStop::Entries,
+                        });
+                    }
                 },
             }
             oldest = Some(item.offset);
         }
 
         if evicted && let Some(oldest) = oldest {
-            return Ok(Outcome::Stopped(Position::Line(oldest)));
+            return Ok(Outcome::Stopped {
+                position: Position::Line(oldest),
+                reason: ScanStop::Entries,
+            });
         }
         if let Some(time) = skipped_before {
             self.note_time(time);
@@ -824,20 +1086,8 @@ impl Page<'_> {
         read: &Rc<Cell<u64>>,
         input_failed: &Rc<Cell<bool>>,
     ) -> Result<Decompressed, ReadError> {
-        let input =
-            InputReader::new(&file.file, read, budget, input_failed).map_err(ReadError::Io)?;
-        let input_cut = Rc::clone(&input.cut);
-        let decoder = decompress(input, &file.path).map_err(ReadError::Io)?;
-        let cut = Rc::new(Cell::new(false));
-        let produced = Rc::new(Cell::new(0));
-        let reader = CountingReader {
-            inner: decoder,
-            read: Rc::clone(read),
-            limit: budget,
-            cut: Rc::clone(&cut),
-            produced: Rc::clone(&produced),
-        };
-        let mut lines = LineReader::new(BufReader::new(reader));
+        let mut lines =
+            CompressedLines::new(file, read, budget, input_failed).map_err(ReadError::Io)?;
         let invalid_cursor =
             |what| ReadError::Cursor(invalid(format!("invalid access log cursor, {what}")));
 
@@ -863,8 +1113,6 @@ impl Page<'_> {
             let (offset, len, line) = match lines.next_line() {
                 Ok(Some(line)) => line,
                 Ok(None) => break,
-                // the decoder saw the compressed data end where the budget did
-                Err(_) if input_cut.get() => break,
                 Err(err) => return Err(ReadError::Io(err)),
             };
             if offset < floor {
@@ -911,11 +1159,11 @@ impl Page<'_> {
             }
         }
 
-        if cut.get() || input_cut.get() {
+        if lines.exhausted() {
             // the line too long to read that the position is in was looked at by earlier pages
             if let Some(Position::WithinLine(within)) = resume
                 && lines.offset() < within
-                && produced.get() >= within
+                && lines.produced.get() >= within
             {
                 return Ok(Decompressed::Reached(buffer));
             }
@@ -929,7 +1177,7 @@ impl Page<'_> {
             Some(Position::Line(resume)) if resume > lines.offset() => {
                 return Err(invalid_cursor("beyond the end of the file"));
             }
-            Some(Position::WithinLine(within)) if within > produced.get() => {
+            Some(Position::WithinLine(within)) if within > lines.produced.get() => {
                 return Err(invalid_cursor("beyond the end of the file"));
             }
             _ => (),
@@ -938,6 +1186,71 @@ impl Page<'_> {
             return Err(invalid_cursor("beyond the end of the file"));
         }
         Ok(Decompressed::Reached(buffer))
+    }
+
+    /// Counts all lines of a compressed copy, or none of them if it cannot get through the copy.
+    /// It reads the copy from its start, and the counts are to cover the log without holes from its
+    /// end on.
+    fn tally_compressed(
+        &mut self,
+        file: &LogFile,
+        tally: &mut Tally,
+    ) -> Result<Result<u64, StopReason>, Error> {
+        let before = (tally.clone(), self.invalid_lines, self.searched_back_to);
+        let budget = self.limits.read.saturating_sub(self.read);
+        let read = Rc::new(Cell::new(0));
+        let input_failed = Rc::new(Cell::new(false));
+        let outcome = self.tally_lines(file, tally, budget, &read, &input_failed);
+        self.read += read.get();
+
+        let reason = match outcome {
+            Ok(Ok(end)) => return Ok(Ok(end)),
+            Ok(Err(reason)) => reason,
+            Err(err) if input_failed.get() => {
+                bail!("unable to read log file {:?} - {err}", file.path)
+            }
+            Err(err) => {
+                log::warn!("skipping damaged log file {:?} - {err}", file.path);
+                self.gaps.push(Gap {
+                    file: file.name(),
+                    reason: GapReason::Damaged,
+                    start: 0,
+                    end: None,
+                });
+                StopReason::Damaged
+            }
+        };
+        (*tally, self.invalid_lines, self.searched_back_to) = before;
+        Ok(Err(reason))
+    }
+
+    /// Looks at the lines of a compressed copy, returning where its data ends, or why it stopped.
+    fn tally_lines(
+        &mut self,
+        file: &LogFile,
+        tally: &mut Tally,
+        budget: u64,
+        read: &Rc<Cell<u64>>,
+        input_failed: &Rc<Cell<bool>>,
+    ) -> io::Result<Result<u64, StopReason>> {
+        let mut lines = CompressedLines::new(file, read, budget, input_failed)?;
+        let mut output = Output::Statistics(tally);
+        loop {
+            match lines.next_line() {
+                Ok(Some((_, _, Line::TooLong(_)))) => self.invalid_lines += 1,
+                Ok(Some((_, _, Line::Complete(line)))) => {
+                    if let Look::Deferred(reason) = self.look_at(line, &mut output) {
+                        return Ok(Err(reason.into()));
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => return Err(err),
+            }
+        }
+        if lines.exhausted() {
+            return Ok(Err(StopReason::ReadBudget));
+        }
+        Ok(Ok(lines.offset()))
     }
 
     /// Identifies a file by the fields of up to `lines` of its first lines that no client chose.
@@ -1021,11 +1334,11 @@ impl Page<'_> {
 
     /// Reads the entries logged after the position of a head cursor, see [`query_newer`].
     fn newer(
-        mut self,
+        &mut self,
         files: &[LogFile],
         head: &Cursor,
-        head_cursor: Option<Cursor>,
-    ) -> Result<QueryResult, Error> {
+        output: &mut Output,
+    ) -> Result<bool, Error> {
         let index = self.locate(files, head)?;
         let floor = match head.position {
             Position::Line(offset) => Some(offset),
@@ -1045,14 +1358,16 @@ impl Page<'_> {
                 check_line_start(file, floor)?;
             }
             let outcome = match file.compressed {
-                true => self.scan_compressed(file, Position::End, floor)?,
-                false => self.scan_plain(file, Position::End, floor)?,
+                true => self.scan_compressed(file, Position::End, floor, output)?,
+                false => self.scan_plain(file, Position::End, floor, output)?,
             };
             match outcome {
                 Outcome::Done => {}
                 // the limit got reached with the first entry logged after the head
-                Outcome::Stopped(Position::Line(position))
-                    if current == index && position == floor => {}
+                Outcome::Stopped {
+                    position: Position::Line(position),
+                    ..
+                } if current == index && position == floor => {}
                 _ => {
                     complete = false;
                     break;
@@ -1060,15 +1375,7 @@ impl Page<'_> {
             }
         }
 
-        Ok(QueryResult {
-            complete: complete && self.gaps.is_empty(),
-            entries: self.entries,
-            next_cursor: None,
-            head_cursor: head_cursor.map(|head| head.to_string()),
-            gaps: self.gaps,
-            searched_back_to: self.searched_back_to,
-            invalid_lines: self.invalid_lines,
-        })
+        Ok(complete)
     }
 
     /// Finds the file a cursor points into.
@@ -1315,6 +1622,58 @@ impl Read for ReadAt<'_> {
         self.offset += read as u64;
         self.read.set(self.read.get() + read as u64);
         Ok(read)
+    }
+}
+
+/// A decoded line stream whose compressed input and output share a read budget.
+struct CompressedLines {
+    lines: LineReader<BufReader<CountingReader<Box<dyn Read>>>>,
+    input_cut: Rc<Cell<bool>>,
+    output_cut: Rc<Cell<bool>>,
+    produced: Rc<Cell<u64>>,
+}
+
+impl CompressedLines {
+    fn new(
+        file: &LogFile,
+        read: &Rc<Cell<u64>>,
+        budget: u64,
+        failed: &Rc<Cell<bool>>,
+    ) -> io::Result<Self> {
+        let input = InputReader::new(&file.file, read, budget, failed)?;
+        let input_cut = Rc::clone(&input.cut);
+        let decoder = decompress(input, &file.path)?;
+        let output_cut = Rc::new(Cell::new(false));
+        let produced = Rc::new(Cell::new(0));
+        let reader = CountingReader {
+            inner: decoder,
+            read: Rc::clone(read),
+            limit: budget,
+            cut: Rc::clone(&output_cut),
+            produced: Rc::clone(&produced),
+        };
+        Ok(Self {
+            lines: LineReader::new(BufReader::new(reader)),
+            input_cut,
+            output_cut,
+            produced,
+        })
+    }
+
+    fn next_line(&mut self) -> io::Result<Option<(u64, u64, Line<'_>)>> {
+        match self.lines.next_line() {
+            // A decoder error at cut input is budget exhaustion, not evidence of corruption.
+            Err(_) if self.input_cut.get() => Ok(None),
+            result => result,
+        }
+    }
+
+    fn offset(&self) -> u64 {
+        self.lines.offset()
+    }
+
+    fn exhausted(&self) -> bool {
+        self.output_cut.get() || self.input_cut.get()
     }
 }
 
@@ -2589,5 +2948,375 @@ mod tests {
         let result = newer(&dir, &filter, filter_limit, &result.head_cursor.unwrap());
         assert_eq!(paths(&result), ["/0/22"]);
         assert!(result.complete);
+    }
+
+    fn time_of(line: &str) -> i64 {
+        AccessLogEntry::parse(line.trim_end(), LogFormat::RestServer)
+            .unwrap()
+            .time
+    }
+
+    fn all_time() -> AccessLogFilter {
+        AccessLogFilter {
+            since: Some(time_of(&line(3, 0)) - 3600),
+            until: Some(time_of(&line(0, 20)) + 3600),
+            ..Default::default()
+        }
+    }
+
+    fn stats_of(dir: &TestDir, filter: &AccessLogFilter, limits: &Limits) -> AccessLogStats {
+        stats_with_limits(
+            &dir.log(),
+            LogFormat::RestServer,
+            filter,
+            StatsOptions {
+                top: Some(MAX_STATS_TOP),
+                bucket: None,
+            },
+            0,
+            limits,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn stats_count_all_files() {
+        let (dir, expected) = rotated_log("stats");
+        let stats = stats_of(&dir, &all_time(), &UNLIMITED);
+        assert!(stats.complete);
+        assert_eq!(stats.stopped, None);
+        assert_eq!(stats.total.requests, expected.len() as u64);
+        assert_eq!(stats.invalid_lines, 2);
+        let files: Vec<&str> = stats.covered.iter().map(|c| c.file.as_str()).collect();
+        assert_eq!(
+            files,
+            [
+                "access.log",
+                "access.log.1",
+                "access.log.2.gz",
+                "access.log.3.zst"
+            ]
+        );
+        let histogram: u64 = stats.histogram.counts.iter().map(|c| c.requests).sum();
+        assert_eq!(histogram, stats.total.requests);
+        assert!(stats.histogram.counts.len() as u64 <= MAX_HISTOGRAM_BUCKETS);
+
+        let root = stats
+            .auth_ids
+            .rows
+            .iter()
+            .find(|row| row.key.is_some())
+            .unwrap();
+        let without = stats
+            .auth_ids
+            .rows
+            .iter()
+            .find(|row| row.key.is_none())
+            .unwrap();
+        assert_eq!(root.key.as_deref(), Some("root@pam"));
+        assert_eq!(root.requests + without.requests, stats.total.requests);
+        assert_eq!(without.unauthenticated, without.requests);
+        assert_eq!(stats.total.unauthenticated, without.requests);
+        assert_eq!(stats.statuses.rows[0].key.as_deref(), Some("200"));
+        assert_eq!(stats.user_agents.unwrap().rows[0].key, None);
+    }
+
+    #[test]
+    fn stats_rows_lead_to_the_requests_they_count() {
+        let (dir, _) = rotated_log("stats-drill");
+        let range = all_time();
+        let stats = stats_of(&dir, &range, &UNLIMITED);
+        let lists = [
+            ("auth-id", &stats.auth_ids),
+            ("client", &stats.clients),
+            ("path-group", &stats.path_groups),
+        ];
+        for (name, list) in lists {
+            for row in &list.rows {
+                let mut filter = range.clone();
+                match (name, row.key.clone()) {
+                    ("auth-id", key) => {
+                        filter.auth_id = Some(key.unwrap_or_else(|| "-".to_string()));
+                        filter.auth_id_exact = Some(true);
+                    }
+                    ("client", Some(key)) => filter.client = Some(key.parse().unwrap()),
+                    ("path-group", Some(key)) => filter.path_group = Some(key),
+                    _ => continue,
+                }
+                let (found, _) = all_pages(&dir.log(), &filter, Some(7), &UNLIMITED);
+                assert_eq!(found.len() as u64, row.requests, "{name} {:?}", row.key);
+            }
+        }
+    }
+
+    #[test]
+    fn format_aware_group_drill_down() {
+        let dir = TestDir::new("network-groups");
+        for format in [LogFormat::PveHttpServer, LogFormat::RestServer] {
+            let mut data = String::new();
+            for resource in ["version", "access/users"] {
+                let path = format!("/api2/json/{resource}");
+                let targets = match format {
+                    LogFormat::PveHttpServer => vec![
+                        path.clone(),
+                        format!("http://host{path}"),
+                        format!("//host{path}"),
+                        format!("//user:SECRET@host{path}"),
+                    ],
+                    LogFormat::RestServer => vec![path.clone(), format!("/{path}")],
+                };
+                for target in targets {
+                    let request = match format {
+                        LogFormat::PveHttpServer => format!("GET {target} HTTP/1.1\" 200 5"),
+                        LogFormat::RestServer => format!("GET {target}\" 200 5 -"),
+                    };
+                    data.push_str(&format!(
+                        "192.0.2.1 - - [22/10/2026:10:00:00 +0000] \"{request}\n"
+                    ));
+                }
+            }
+            dir.write("access.log", data.as_bytes());
+            let filter = AccessLogFilter {
+                since: Some(0),
+                until: Some(i64::MAX),
+                ..Default::default()
+            };
+            let result = stats(&dir.log(), format, &filter, StatsOptions::default()).unwrap();
+            assert_eq!(result.path_groups.rows.len(), 2);
+            for row in result.path_groups.rows {
+                assert!(matches!(
+                    row.key.as_deref(),
+                    Some("/api2/json/version" | "/api2/json/access/users")
+                ));
+                let filter = AccessLogFilter {
+                    path_group: row.key,
+                    ..filter.clone()
+                };
+                let page = query(&dir.log(), format, &filter, None, None).unwrap();
+                assert_eq!(page.entries.len() as u64, row.requests);
+                assert_eq!(
+                    row.requests,
+                    if format == LogFormat::PveHttpServer {
+                        4
+                    } else {
+                        2
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stats_range_and_defaults() {
+        let (dir, _) = rotated_log("stats-range");
+        let filter = AccessLogFilter {
+            since: Some(time_of(&line(0, 0))),
+            until: Some(time_of(&line(0, 19))),
+            auth_id: Some("root@pam".to_string()),
+            ..Default::default()
+        };
+        let stats = stats_of(&dir, &filter, &UNLIMITED);
+        // lines 0, 3, .., 18 of the current file
+        assert_eq!(stats.total.requests, 7);
+        assert_eq!(
+            (stats.since, stats.until),
+            (filter.since.unwrap(), filter.until.unwrap())
+        );
+
+        let now = time_of(&line(0, 10));
+        let stats = stats_with_limits(
+            &dir.log(),
+            LogFormat::RestServer,
+            &AccessLogFilter::default(),
+            StatsOptions::default(),
+            now,
+            &UNLIMITED,
+        )
+        .unwrap();
+        assert_eq!((stats.since, stats.until), (now - DEFAULT_STATS_RANGE, now));
+        assert_eq!(stats.histogram.bucket, 300);
+        assert_eq!(stats.histogram.counts.len(), 289);
+        assert!(stats.clients.rows.len() as u64 <= DEFAULT_STATS_TOP);
+
+        for (filter, top, bucket) in [
+            (AccessLogFilter::default(), Some(0), None),
+            (AccessLogFilter::default(), Some(MAX_STATS_TOP + 1), None),
+            (AccessLogFilter::default(), None, Some(0)),
+            (AccessLogFilter::default(), None, Some(60)),
+            (
+                AccessLogFilter {
+                    since: Some(now),
+                    until: Some(now - 1),
+                    ..Default::default()
+                },
+                None,
+                None,
+            ),
+        ] {
+            assert!(
+                stats_with_limits(
+                    &dir.log(),
+                    LogFormat::RestServer,
+                    &filter,
+                    StatsOptions { top, bucket },
+                    now,
+                    &UNLIMITED
+                )
+                .is_err_and(|err| err.is::<InvalidRequest>()),
+                "{filter:?} {top:?} {bucket:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stats_stop_at_the_budgets() {
+        let (dir, _) = rotated_log("stats-budget");
+        let len = |name: &str| std::fs::metadata(dir.0.join(name)).unwrap().len();
+        let lines_in = |file: usize| match file {
+            0 => 20,
+            _ => 15,
+        };
+
+        // enough for the plain files, not for the compressed copy after them
+        let limits = Limits {
+            read: len("access.log") + len("access.log.1") + 40,
+            ..UNLIMITED
+        };
+        let stats = stats_of(&dir, &all_time(), &limits);
+        assert!(!stats.complete);
+        assert_eq!(stats.stopped, Some(StopReason::ReadBudget));
+        let files: Vec<&str> = stats.covered.iter().map(|c| c.file.as_str()).collect();
+        assert_eq!(files, ["access.log", "access.log.1"]);
+        assert_eq!(stats.total.requests, lines_in(0) + lines_in(1));
+        assert_eq!(stats.invalid_lines, 1);
+
+        // Enough parse budget for the five newest complete lines.
+        let line_len = line(0, 18).len() as u64;
+        let limits = Limits {
+            parse: 5 * line_len,
+            ..UNLIMITED
+        };
+        let stats = stats_of(&dir, &all_time(), &limits);
+        assert_eq!(stats.stopped, Some(StopReason::ParseBudget));
+        assert_eq!(stats.covered.len(), 1);
+        let covered = &stats.covered[0];
+        assert_eq!(covered.file, "access.log");
+        assert!(covered.start > 0 && covered.end < len("access.log"));
+        assert_eq!(stats.total.requests, 5);
+    }
+
+    #[test]
+    fn stats_stop_at_a_damaged_copy() {
+        let (dir, _) = rotated_log("stats-damaged");
+        let copy = gzip(
+            (0..10)
+                .map(|number| line(2, number))
+                .collect::<String>()
+                .as_bytes(),
+        );
+        dir.write("access.log.2.gz", &copy[..copy.len() - 8]);
+        let stats = stats_of(&dir, &all_time(), &UNLIMITED);
+        assert!(!stats.complete);
+        assert_eq!(stats.stopped, Some(StopReason::Damaged));
+        assert_eq!(stats.gaps.len(), 1);
+        assert_eq!(stats.gaps[0].file, "access.log.2.gz");
+        assert_eq!(stats.covered.len(), 2);
+        assert_eq!(stats.total.requests, 35);
+    }
+
+    #[test]
+    fn histogram_buckets_of_extreme_ranges() {
+        for (since, until, bucket) in [
+            (i64::MIN, i64::MAX, Some(1)),
+            (i64::MIN, i64::MAX, None),
+            (i64::MIN, i64::MIN, None),
+            (0, 0, Some(u64::MAX)),
+            (0, 0, Some(i64::MAX as u64 + 1)),
+        ] {
+            assert!(
+                histogram_bucket(since, until, bucket).is_err_and(|err| err.is::<InvalidRequest>()),
+                "{since} {until} {bucket:?}"
+            );
+        }
+        assert_eq!(
+            histogram_bucket(0, 0, Some(i64::MAX as u64)).unwrap(),
+            i64::MAX as u64
+        );
+        assert_eq!(
+            histogram_bucket(0, 3600 * 24 * 365 * 100, None).unwrap(),
+            128 * 86400
+        );
+
+        let (dir, _) = rotated_log("stats-extreme");
+        let filter = AccessLogFilter {
+            since: Some(i64::MIN),
+            until: Some(i64::MAX),
+            ..Default::default()
+        };
+        assert!(
+            stats_with_limits(
+                &dir.log(),
+                LogFormat::RestServer,
+                &filter,
+                StatsOptions::default(),
+                0,
+                &UNLIMITED
+            )
+            .is_err_and(|err| err.is::<InvalidRequest>())
+        );
+    }
+
+    #[test]
+    fn stats_coverage_survives_older_oversized_lines() {
+        let dir = TestDir::new("stats-oversized-middle");
+        let log = line(0, 0) + &"x".repeat(4 * 1024 * 1024) + "\n" + &line(0, 1);
+        dir.write("access.log", log.as_bytes());
+        let stats = stats_of(&dir, &all_time(), &UNLIMITED);
+        assert_eq!(stats.total.requests, 2);
+        assert_eq!(stats.invalid_lines, 1);
+        assert_eq!(stats.covered[0].end, log.len() as u64);
+    }
+
+    #[test]
+    fn stats_longest_pve_http_server_lines() {
+        let dir = TestDir::new("stats-longest-pve");
+        let data = longest_pve_log();
+        dir.write("access.log", data.as_bytes());
+        dir.write("access.log.1.gz", &gzip(data.as_bytes()));
+        let stats = stats_with_limits(
+            &dir.log(),
+            LogFormat::PveHttpServer,
+            &all_time(),
+            StatsOptions::default(),
+            0,
+            &LIMITS,
+        )
+        .unwrap();
+        assert_eq!(stats.total.requests, 6);
+        assert_eq!(stats.invalid_lines, 0);
+    }
+
+    #[test]
+    fn stats_cover_lines_before_a_long_tail() {
+        let dir = TestDir::new("stats-long-tail");
+        let lines = line(0, 0) + &line(0, 1);
+        dir.write(
+            "access.log",
+            (lines.clone() + &"x".repeat(MAX_LINE_LENGTH + 5)).as_bytes(),
+        );
+        let stats = stats_of(&dir, &all_time(), &UNLIMITED);
+        assert_eq!(stats.total.requests, 2);
+        assert_eq!(stats.covered[0].start, 0);
+        assert_eq!(stats.covered[0].end, lines.len() as u64);
+    }
+
+    #[test]
+    fn stats_cover_complete_lines_only() {
+        let (dir, _) = rotated_log("stats-tail");
+        let stats = stats_of(&dir, &all_time(), &UNLIMITED);
+        let data = std::fs::read(dir.log()).unwrap();
+        let lines_end = data.iter().rposition(|&b| b == b'\n').unwrap() as u64 + 1;
+        assert!(lines_end < data.len() as u64);
+        assert_eq!(stats.covered[0].end, lines_end);
     }
 }

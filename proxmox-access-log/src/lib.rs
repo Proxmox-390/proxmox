@@ -36,6 +36,7 @@ mod filter;
 mod group;
 mod reader;
 mod result;
+mod stats;
 mod time;
 
 #[cfg(feature = "query")]
@@ -47,9 +48,15 @@ pub use reader::{AccessLogReader, Error};
 #[cfg(feature = "api-types")]
 pub use result::{CURSOR_SCHEMA, HEAD_CURSOR_SCHEMA, LIMIT_SCHEMA};
 pub use result::{DEFAULT_LIMIT, Gap, GapReason, MAX_CURSOR_LENGTH, MAX_LIMIT, QueryResult};
+pub use stats::{
+    AccessLogStats, Counts, CoveredRange, DEFAULT_STATS_RANGE, DEFAULT_STATS_TOP, Histogram,
+    MAX_HISTOGRAM_BUCKETS, MAX_STATS_TOP, StatsList, StatsOptions, StatsRow, StopReason,
+};
 
 #[cfg(feature = "query")]
-pub use query::{InvalidRequest, MAX_PARSE_BYTES, MAX_READ_BYTES, log_files, query, query_newer};
+pub use query::{
+    InvalidRequest, MAX_PARSE_BYTES, MAX_READ_BYTES, log_files, query, query_newer, stats,
+};
 
 /// proxmox-rest-server truncates user agents to this length. A longer one without a recognized
 /// record start cannot stem from an intact log entry.
