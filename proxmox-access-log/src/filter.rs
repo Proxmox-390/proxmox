@@ -7,9 +7,13 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "api-types")]
 use proxmox_schema::{api, api_types::IP_SCHEMA};
 
-use crate::{AccessLogEntry, Prefix};
+use crate::group::path_group;
+use crate::{AccessLogEntry, LogFormat, Prefix};
+#[cfg(feature = "api-types")]
+use crate::{MAX_PATH_GROUP_LENGTH, MAX_USER_AGENT_LENGTH};
 
-/// The longest auth-id a filter accepts, as API token names of Proxmox VE have no length limit.
+/// The longest auth-id a filter accepts, which is the longest one statistics list, as API token
+/// names of Proxmox VE have no length limit.
 pub const MAX_AUTH_ID_LENGTH: usize = 1024;
 
 #[cfg_attr(feature = "api-types", api(
@@ -33,6 +37,14 @@ pub const MAX_AUTH_ID_LENGTH: usize = 1024;
         search: {
             optional: true,
             max_length: 1024,
+        },
+        "path-group": {
+            optional: true,
+            max_length: MAX_PATH_GROUP_LENGTH,
+        },
+        "user-agent": {
+            optional: true,
+            max_length: MAX_USER_AGENT_LENGTH,
         },
         "min-status": {
             optional: true,
@@ -62,6 +74,11 @@ pub struct AccessLogFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_id: Option<String>,
 
+    /// Whether the auth-id only matches itself, so a user does not match its API tokens, and `-`
+    /// matches requests without any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_id_exact: Option<bool>,
+
     /// Only requests from this client address.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client: Option<IpAddr>,
@@ -80,6 +97,14 @@ pub struct AccessLogFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<String>,
 
+    /// Only requests whose path belongs to this group, as listed by the access log statistics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_group: Option<String>,
+
+    /// Only requests with this user agent, as logged. Only proxmox-rest-server logs these.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<String>,
+
     /// Only responses with a known status code of at least this value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_status: Option<u16>,
@@ -90,8 +115,8 @@ pub struct AccessLogFilter {
 }
 
 impl AccessLogFilter {
-    /// Whether an entry meets all criteria.
-    pub fn matches(&self, entry: &AccessLogEntry) -> bool {
+    /// Whether an entry meets all criteria, interpreting its request target in the given format.
+    pub fn matches(&self, entry: &AccessLogEntry, format: LogFormat) -> bool {
         self.matches_fields(entry.time, entry.auth_id.as_deref(), entry.client)
             && self.method.as_deref().is_none_or(|method| {
                 entry
@@ -108,6 +133,15 @@ impl AccessLogFilter {
                 .search
                 .as_deref()
                 .is_none_or(|search| search_matches(entry, search))
+            && self.path_group.as_deref().is_none_or(|group| {
+                entry
+                    .path()
+                    .is_some_and(|entry_path| path_group(entry_path, format) == group)
+            })
+            && self
+                .user_agent
+                .as_deref()
+                .is_none_or(|user_agent| entry.user_agent.as_deref() == Some(user_agent))
             && self
                 .min_status
                 .is_none_or(|min| entry.status.is_some_and(|status| status >= min))
@@ -126,9 +160,13 @@ impl AccessLogFilter {
     fn matches_fields(&self, time: i64, auth_id: Option<&str>, client: Option<IpAddr>) -> bool {
         self.since.is_none_or(|since| time >= since)
             && self.until.is_none_or(|until| time <= until)
-            && self.auth_id.as_deref().is_none_or(|filter| {
-                auth_id.is_some_and(|auth_id| auth_id_matches(auth_id, filter))
-            })
+            && self
+                .auth_id
+                .as_deref()
+                .is_none_or(|filter| match self.auth_id_exact {
+                    Some(true) => auth_id.unwrap_or("-") == filter,
+                    _ => auth_id.is_some_and(|auth_id| auth_id_matches(auth_id, filter)),
+                })
             && self
                 .client
                 .is_none_or(|filter| client == Some(filter.to_canonical()))
@@ -247,7 +285,11 @@ mod tests {
                 search: Some(search.to_string()),
                 ..Default::default()
             };
-            assert_eq!(filter.matches(&entry), expected, "{search}");
+            assert_eq!(
+                filter.matches(&entry, LogFormat::RestServer),
+                expected,
+                "{search}"
+            );
         }
 
         let entry = AccessLogEntry::parse(
@@ -260,7 +302,7 @@ mod tests {
                 search: Some(search.to_string()),
                 ..Default::default()
             };
-            assert!(filter.matches(&entry), "{search}");
+            assert!(filter.matches(&entry, LogFormat::RestServer), "{search}");
         }
     }
 
@@ -291,12 +333,20 @@ mod tests {
                     path: Some(path.clone()),
                     ..Default::default()
                 };
-                assert_eq!(filter.matches(&entry), expected, "{target} {path}");
+                assert_eq!(
+                    filter.matches(&entry, LogFormat::PveHttpServer),
+                    expected,
+                    "{target} {path}"
+                );
                 let search = AccessLogFilter {
                     search: Some(path.to_uppercase()),
                     ..Default::default()
                 };
-                assert_eq!(search.matches(&entry), expected, "search {target} {path}");
+                assert_eq!(
+                    search.matches(&entry, LogFormat::PveHttpServer),
+                    expected,
+                    "search {target} {path}"
+                );
             }
         }
     }
@@ -316,7 +366,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                filter.matches(&entry("-", request, 200)),
+                filter.matches(&entry("-", request, 200), LogFormat::RestServer),
                 expected,
                 "{request} {filter:?}"
             );
@@ -330,7 +380,7 @@ mod tests {
             "POST /api2/json/nodes/pve/qemu/100/status/start/storage/local%3Aiso/x?y=%25",
             403,
         );
-        let matches = |filter: AccessLogFilter| filter.matches(&entry);
+        let matches = |filter: AccessLogFilter| filter.matches(&entry, LogFormat::RestServer);
 
         assert!(matches(AccessLogFilter::default()));
 
@@ -419,9 +469,9 @@ mod tests {
                 max_status,
                 ..Default::default()
             };
-            assert!(!filter.matches(&unknown));
+            assert!(!filter.matches(&unknown, LogFormat::PveHttpServer));
         }
-        assert!(AccessLogFilter::default().matches(&unknown));
+        assert!(AccessLogFilter::default().matches(&unknown, LogFormat::PveHttpServer));
 
         for (min_status, max_status, expected) in [
             (Some(400), None, true),
@@ -440,6 +490,57 @@ mod tests {
     }
 
     #[test]
+    fn exact_user_path_group_and_user_agent() {
+        let token = entry(
+            "root@pam!t",
+            "GET /api2/json/nodes/pve/qemu/100/status?x=1",
+            200,
+        );
+        let anonymous = entry("-", "GET /api2/json/version", 401);
+        let exact = |auth_id: &str| AccessLogFilter {
+            auth_id: Some(auth_id.to_string()),
+            auth_id_exact: Some(true),
+            ..Default::default()
+        };
+        assert!(!exact("root@pam").matches(&token, LogFormat::RestServer));
+        assert!(exact("root@pam!t").matches(&token, LogFormat::RestServer));
+        assert!(exact("-").matches(&anonymous, LogFormat::RestServer));
+        assert!(!exact("-").matches(&token, LogFormat::RestServer));
+
+        for (group, expected) in [
+            ("/api2/json/nodes/{node}/qemu/{id}/status", true),
+            ("/api2/json/nodes/{node}/qemu/{id}", false),
+        ] {
+            let filter = AccessLogFilter {
+                path_group: Some(group.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                filter.matches(&token, LogFormat::RestServer),
+                expected,
+                "{group}"
+            );
+        }
+
+        let with_agent = AccessLogEntry::parse(
+            "192.0.2.10 - - [22/10/2026:14:03:51 +0200] \"GET /\" 200 5 curl/8.0 (x)",
+            LogFormat::RestServer,
+        )
+        .unwrap();
+        for (user_agent, expected) in [("curl/8.0 (x)", true), ("curl/8.0", false)] {
+            let filter = AccessLogFilter {
+                user_agent: Some(user_agent.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                filter.matches(&with_agent, LogFormat::RestServer),
+                expected,
+                "{user_agent}"
+            );
+        }
+    }
+
+    #[test]
     fn requests_without_user_or_line() {
         let unauthenticated = entry("-", "GET /", 401);
         assert!(
@@ -447,7 +548,7 @@ mod tests {
                 auth_id: Some("root@pam".to_string()),
                 ..Default::default()
             }
-            .matches(&unauthenticated)
+            .matches(&unauthenticated, LogFormat::RestServer)
         );
 
         let no_request = AccessLogEntry::parse(
@@ -465,7 +566,7 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            assert!(!filter.matches(&no_request));
+            assert!(!filter.matches(&no_request, LogFormat::PveHttpServer));
         }
     }
 }

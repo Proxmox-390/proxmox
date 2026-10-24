@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use proxmox_schema::{api, api_types::IP_SCHEMA};
 
 mod filter;
+mod group;
 mod reader;
 mod result;
 mod time;
@@ -41,6 +42,7 @@ mod time;
 mod query;
 
 pub use filter::{AccessLogFilter, MAX_AUTH_ID_LENGTH};
+pub use group::{MAX_PATH_GROUP_LENGTH, path_group};
 pub use reader::{AccessLogReader, Error};
 #[cfg(feature = "api-types")]
 pub use result::{CURSOR_SCHEMA, HEAD_CURSOR_SCHEMA, LIMIT_SCHEMA};
@@ -51,7 +53,7 @@ pub use query::{InvalidRequest, MAX_PARSE_BYTES, MAX_READ_BYTES, log_files, quer
 
 /// proxmox-rest-server truncates user agents to this length. A longer one without a recognized
 /// record start cannot stem from an intact log entry.
-const MAX_USER_AGENT_LENGTH: usize = 128;
+pub const MAX_USER_AGENT_LENGTH: usize = 128;
 
 /// The access log formats of the HTTP servers used by Proxmox products.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -750,6 +752,54 @@ mod tests {
                 "{request:?}"
             );
         }
+    }
+
+    #[test]
+    fn pve_http_server_representations() {
+        let line = |request: &str| {
+            format!("192.0.2.10 - - [22/10/2026:14:03:51 +0200] \"{request}\" 501 -")
+        };
+        for (sent, parsed, path) in [
+            (
+                "GET /api2/json/\"x HTTP/1.1",
+                "GET /api2/json/%22x HTTP/1.1",
+                "/json/\"x",
+            ),
+            (
+                "GET /api2/json/a\\b HTTP/1.1",
+                "GET /api2/json/a%5Cb HTTP/1.1",
+                "/json/a\\b",
+            ),
+            (
+                "GET /api2/json/Gr\u{fc}\u{df}e HTTP/1.1",
+                "GET /api2/json/Gr%C3%BC%C3%9Fe HTTP/1.1",
+                "/json/Gr\u{fc}\u{df}e",
+            ),
+            (
+                "x\tGET /api2/json/v HTTP/1.1",
+                "GET /api2/json/v HTTP/1.1",
+                "/json/v",
+            ),
+        ] {
+            let sent = parse_pve(&line(sent)).unwrap();
+            let parsed = parse_pve(&line(parsed)).unwrap();
+            assert_eq!(parsed.request_line, None);
+            assert_eq!(sent.method, parsed.method);
+            let group = |entry: &AccessLogEntry| {
+                path_group(entry.path().unwrap(), LogFormat::PveHttpServer)
+            };
+            assert_eq!(group(&sent), group(&parsed));
+            let filter = AccessLogFilter {
+                path: Some(path.to_string()),
+                ..Default::default()
+            };
+            for entry in [&sent, &parsed] {
+                assert!(filter.matches(entry, LogFormat::PveHttpServer), "{entry:?}");
+            }
+        }
+        let entry = parse_pve(&line("G\\xC3\\xA4T /api2/json/version HTTP/1.1")).unwrap();
+        assert_eq!(entry.method.as_deref(), Some("G\\xC3\\xA4T"));
+        assert_eq!(entry.request_line, None);
     }
 
     #[test]

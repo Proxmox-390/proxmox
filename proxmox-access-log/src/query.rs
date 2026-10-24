@@ -588,7 +588,7 @@ impl Page<'_> {
             }
         };
 
-        if self.filter.matches(&entry) {
+        if self.filter.matches(&entry, self.format) {
             let size = entry_size(&entry);
             // Always take one, as lossy decoding can make an entry larger than the limit.
             if !self.entries.is_empty() && self.entry_bytes + size > self.limits.entries {
