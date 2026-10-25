@@ -60,6 +60,21 @@ pub struct PackageChange {
     pub automatic: bool,
 }
 
+impl PackageChange {
+    /// The versions of the changelog entries that came with the change, those later than the first
+    /// one and up to including the second one, or `None` for the first one if there is no earlier
+    /// version, like for installs. The entries of a downgrade are the ones it reverted. Returns
+    /// `None` for changes without a new version, like removals.
+    pub fn changelog_range(&self) -> Option<(Option<&str>, &str)> {
+        let new_version = self.new_version.as_deref()?;
+        Some(match (self.action, self.old_version.as_deref()) {
+            (PackageAction::Upgrade, Some(old)) if old != new_version => (Some(old), new_version),
+            (PackageAction::Downgrade, Some(old)) if old != new_version => (Some(new_version), old),
+            _ => (None, new_version),
+        })
+    }
+}
+
 fn is_false(value: &bool) -> bool {
     !value
 }
@@ -173,4 +188,37 @@ pub struct HistoryListOptions {
         deserialize_with = "proxmox_serde::perl::deserialize_u64"
     )]
     pub limit: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changelog_range() {
+        use PackageAction::*;
+
+        let change = |action, old_version: Option<&str>, new_version: Option<&str>| PackageChange {
+            action,
+            package: "foo".to_string(),
+            arch: None,
+            old_version: old_version.map(str::to_string),
+            new_version: new_version.map(str::to_string),
+            automatic: false,
+        };
+        for (action, old, new, expected) in [
+            (Upgrade, Some("1"), Some("2"), Some((Some("1"), "2"))),
+            (Downgrade, Some("2"), Some("1"), Some((Some("1"), "2"))),
+            (Upgrade, Some("2"), Some("2"), Some((None, "2"))),
+            (Install, None, Some("2"), Some((None, "2"))),
+            (Reinstall, Some("2"), Some("2"), Some((None, "2"))),
+            (Remove, Some("2"), None, None),
+        ] {
+            assert_eq!(
+                change(action, old, new).changelog_range(),
+                expected,
+                "{action:?}"
+            );
+        }
+    }
 }
