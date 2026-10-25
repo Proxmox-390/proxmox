@@ -22,6 +22,9 @@ use proxmox_schema::api;
 #[cfg(all(feature = "api", not(target_arch = "wasm32")))]
 pub mod api;
 
+mod changes;
+pub use changes::{ChangeBlock, parse_changes};
+
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod installed;
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
