@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use flate2::read::MultiGzDecoder;
@@ -82,9 +82,13 @@ pub fn open_log_file(path: &Path) -> Result<Box<dyn BufRead + Send>, Error> {
     }
 }
 
+/// Lines longer than this are taken as damaged log, they would only be kept in memory as a whole.
+pub(crate) const MAX_LINE_LENGTH: usize = if cfg!(test) { 4096 } else { 4 * 1024 * 1024 };
+
 /// Reads a log line by line, tracking the line number.
 ///
-/// Lines are converted to UTF-8 lossily, as APT logs command lines and dpkg output verbatim.
+/// Lines are converted to UTF-8 lossily, as APT logs command lines and dpkg output verbatim. A line
+/// longer than [`MAX_LINE_LENGTH`] is a read error.
 pub(crate) struct LineReader<R> {
     reader: R,
     buf: Vec<u8>,
@@ -108,10 +112,48 @@ impl<R: BufRead> LineReader<R> {
     /// Returns the next line including its line ending, or `None` at the end of the log.
     pub(crate) fn next_line(&mut self) -> io::Result<Option<String>> {
         self.buf.clear();
-        if self.reader.read_until(b'\n', &mut self.buf)? == 0 {
+        let limit = MAX_LINE_LENGTH as u64 + 1;
+        if (&mut self.reader)
+            .take(limit)
+            .read_until(b'\n', &mut self.buf)?
+            == 0
+        {
             return Ok(None);
         }
         self.line += 1;
+        if self.buf.len() > MAX_LINE_LENGTH {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "line {} longer than {} MiB",
+                    self.line,
+                    MAX_LINE_LENGTH / 1024 / 1024
+                ),
+            ));
+        }
         Ok(Some(String::from_utf8_lossy(&self.buf).into_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_lines() {
+        let log = format!(
+            "short\n{}\n{}\nafter\n",
+            "x".repeat(MAX_LINE_LENGTH - 1),
+            "x".repeat(MAX_LINE_LENGTH)
+        );
+        let mut lines = LineReader::new(log.as_bytes());
+        assert_eq!(
+            lines.next_line().expect("short line").as_deref(),
+            Some("short\n")
+        );
+        let longest = lines.next_line().expect("longest line").expect("a line");
+        assert_eq!(longest.len(), MAX_LINE_LENGTH);
+        let err = lines.next_line().expect_err("too long line");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

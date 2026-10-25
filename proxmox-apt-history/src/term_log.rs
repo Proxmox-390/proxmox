@@ -21,14 +21,19 @@ pub struct TermLogSection {
     pub output: String,
 }
 
+/// Terminal output larger than this is taken as damaged section, it would be kept in memory as a
+/// whole.
+const MAX_SECTION_SIZE: usize = if cfg!(test) { 65536 } else { 64 * 1024 * 1024 };
+
 /// Iterator over the sections of an APT terminal log, oldest first.
 ///
 /// APT frames the output of each transaction with `Log started` and `Log ended` lines, which carry
 /// the same timestamps as the `Start-Date` and `End-Date` of the corresponding history log entry.
 ///
-/// A section with an invalid timestamp yields an [`Error::Parse`], after which iteration continues
-/// with the next section. Iteration ends after the first [`Error::Io`]. Like for the history log,
-/// the start index counts the sections read by this parser, so it should be used for a whole file.
+/// A section with an invalid timestamp or terminal output larger than 64 MiB yields an
+/// [`Error::Parse`], after which iteration continues with the next section. Iteration ends after
+/// the first [`Error::Io`]. Like for the history log, the start index counts the sections read by
+/// this parser, so it should be used for a whole file.
 pub struct TermLogParser<R> {
     lines: LineReader<R>,
     /// Line number and date of a `Log started` line consumed while parsing the previous section.
@@ -83,6 +88,19 @@ impl<R: BufRead> TermLogParser<R> {
             end_time: None,
             output: String::new(),
         };
+        // a section that is too big still gets read to its end, to continue with the next one
+        let mut push_output = |section: &mut TermLogSection, output: &str| {
+            if section.output.len() + output.len() > MAX_SECTION_SIZE {
+                problem.get_or_insert_with(|| {
+                    format!(
+                        "terminal output larger than {} MiB",
+                        MAX_SECTION_SIZE / 1024 / 1024
+                    )
+                });
+            } else {
+                section.output.push_str(output);
+            }
+        };
 
         while let Some(line) = self.lines.next_line()? {
             if let Some(value) = line.strip_prefix("Log started:") {
@@ -105,11 +123,11 @@ impl<R: BufRead> TermLogParser<R> {
             if let Some((output, value)) = line.rsplit_once("Log ended: ")
                 && let Some(end_time) = parse_log_time(value)
             {
-                section.output.push_str(output);
+                push_output(&mut section, output);
                 section.end_time = Some(end_time);
                 break;
             }
-            section.output.push_str(&line);
+            push_output(&mut section, &line);
         }
 
         match problem {
@@ -273,5 +291,22 @@ mod tests {
                 clean_terminal_output(&section.output, TermLogFormat::Plain)
             );
         }
+    }
+
+    #[test]
+    fn bounded_sections() {
+        let big = "x".repeat(1000) + "\n";
+        let log = format!(
+            "Log started: 2026-10-01  11:33:47\n{}Log ended: 2026-10-01  11:34:22\n\
+             Log started: 2026-10-01  11:33:47\nbar\nLog ended: 2026-10-01  11:34:22\n",
+            big.repeat(MAX_SECTION_SIZE / big.len() + 1),
+        );
+        let sections: Vec<_> = TermLogParser::new(log.as_bytes()).collect();
+        assert_eq!(sections.len(), 2);
+        assert!(
+            matches!(&sections[0], Err(Error::Parse { line: 1, message }) if message.contains("larger"))
+        );
+        let second = sections[1].as_ref().expect("valid section");
+        assert_eq!((second.start_index, second.output.as_str()), (1, "bar\n"));
     }
 }

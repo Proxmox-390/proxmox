@@ -1,6 +1,10 @@
 use crate::TermLogFormat;
 use crate::style::TextStyle;
 
+/// Output larger than this gets cut off, as cursor movements and styles can make it a lot larger
+/// than the terminal output.
+const MAX_TEXT_SIZE: usize = if cfg!(test) { 65536 } else { 64 * 1024 * 1024 };
+
 /// Turns raw terminal output into text in the given format.
 ///
 /// Follows the cursor movements within a line, like a terminal does, for example for progress
@@ -9,6 +13,7 @@ use crate::style::TextStyle;
 /// in the flow of the text. Removes trailing whitespace, blank lines at the start and the end, and
 /// collapses runs of blank lines into one. Drops other terminal control sequences, except for the
 /// colors and text styles kept in the styled format, and other control characters except tabs.
+/// Output beyond 64 MiB is cut off with a note.
 pub fn clean_terminal_output(raw: &str, format: TermLogFormat) -> String {
     let mut text = TextWriter::new(format, raw.len());
     let mut chars = raw.chars();
@@ -63,6 +68,12 @@ pub fn clean_terminal_output(raw: &str, format: TermLogFormat) -> String {
     }
 
     text.end_line(false);
+    if text.cut_off {
+        text.output.push_str(&format!(
+            "\n[output cut off after {} MiB]\n",
+            MAX_TEXT_SIZE / 1024 / 1024
+        ));
+    }
     text.output
 }
 
@@ -82,6 +93,8 @@ struct TextWriter {
     row: Option<usize>,
     /// Whether a blank line is due before the next line with content.
     blank_line: bool,
+    /// Whether text got dropped because of the size limit.
+    cut_off: bool,
 }
 
 impl TextWriter {
@@ -94,7 +107,13 @@ impl TextWriter {
             style: TextStyle::default(),
             row: None,
             blank_line: false,
+            cut_off: false,
         }
+    }
+
+    /// Whether the output reached [`MAX_TEXT_SIZE`], after which nothing more gets written.
+    fn full(&self) -> bool {
+        self.output.len() >= MAX_TEXT_SIZE
     }
 
     /// Writes a character at the cursor position, replacing any there.
@@ -147,7 +166,10 @@ impl TextWriter {
             self.line.pop();
         }
 
-        if self.line.is_empty() {
+        if self.full() {
+            self.cut_off |= !self.line.is_empty();
+            self.line.clear();
+        } else if self.line.is_empty() {
             self.blank_line |= line_break && !self.output.is_empty();
         } else {
             if std::mem::take(&mut self.blank_line) {
@@ -155,6 +177,10 @@ impl TextWriter {
             }
             let mut style = TextStyle::default();
             for (c, char_style) in self.line.drain(..) {
+                if self.output.len() >= MAX_TEXT_SIZE {
+                    self.cut_off = true;
+                    break;
+                }
                 if self.format == TermLogFormat::Styled && char_style != style {
                     char_style.write_sgr(&mut self.output);
                     style = char_style;
@@ -273,6 +299,33 @@ mod tests {
         let rows = 4 * MAX_COLUMN;
         let output = plain(&"x\x1b[B".repeat(rows));
         assert!(output.len() <= rows * (MAX_COLUMN + 2));
+    }
+
+    #[test]
+    fn bounded_text() {
+        // the limit is in bytes, also for characters taking more than one
+        let raw = "\u{1f600}".repeat(100) + "\x1b[1000Gx\n";
+        let output = plain(&raw.repeat(MAX_TEXT_SIZE / 1400 + 10));
+        assert!(output.len() < MAX_TEXT_SIZE + 2000);
+        assert!(output.ends_with(" MiB]\n"));
+
+        // reaching the limit without dropping anything does not add a note
+        let raw = ("x".repeat(1023) + "\n").repeat(MAX_TEXT_SIZE / 1024);
+        assert_eq!(plain(&format!("{raw} \n\n")), raw);
+        assert!(plain(&format!("{raw}\x1b[1Ay\n")).ends_with(" MiB]\n"));
+        assert!(plain(&format!("{raw}y")).ends_with(" MiB]\n"));
+        assert_eq!(plain(&format!("{raw}\x1b[0m\x07\n\x1b[1m \n")), raw);
+        assert!(plain(&format!("{raw}\u{a0}\n")).ends_with(" MiB]\n"));
+
+        // padding and styles count too, also within a line
+        let output = plain(&"x\x1b[999C.\n".repeat(MAX_TEXT_SIZE / 1000 + 10));
+        assert!(output.len() < MAX_TEXT_SIZE + 100);
+        assert!(output.ends_with(" MiB]\n"));
+        let raw = "\x1b[1;3;4;9;38;5;123;48;5;200m".to_string()
+            + &"a\x1b[22mb\x1b[1m".repeat(MAX_TEXT_SIZE);
+        let output = styled(&raw);
+        assert!(output.len() < MAX_TEXT_SIZE + 100);
+        assert!(output.ends_with(" MiB]\n"));
     }
 
     #[test]

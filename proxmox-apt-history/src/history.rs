@@ -5,12 +5,20 @@ use crate::files::LineReader;
 use crate::time::parse_log_time;
 use crate::{Error, HistoryEntry, PackageAction, PackageChange};
 
+/// Entries with more lines than this in bytes are taken as damaged, as the changes of an entry are
+/// kept in memory.
+const MAX_ENTRY_SIZE: usize = if cfg!(test) { 4096 } else { 4 * 1024 * 1024 };
+
+/// Entries with more package changes than this are taken as damaged, like too large ones.
+const MAX_ENTRY_CHANGES: usize = if cfg!(test) { 1000 } else { 100_000 };
+
 /// Iterator over the entries of an APT history log, oldest first.
 ///
-/// Lines with unknown keys are ignored. An entry that cannot be parsed yields an [`Error::Parse`],
-/// after which iteration continues with the next entry. Iteration ends after the first
-/// [`Error::Io`]. The [`HistoryEntry::start_index`] counts the entries of the log read by this
-/// parser, so it should be used for a whole log file.
+/// Lines with unknown keys are ignored. An entry that cannot be parsed, has more than 4 MiB of
+/// lines between its start and end lines or more than 100000 package changes yields an
+/// [`Error::Parse`], after which iteration continues with the next entry. Iteration ends after the
+/// first [`Error::Io`]. The [`HistoryEntry::start_index`] counts the entries of the log read by
+/// this parser, so it should be used for a whole log file.
 ///
 /// ```
 /// use proxmox_apt_history::{HistoryParser, PackageAction};
@@ -50,6 +58,8 @@ impl<R: BufRead> HistoryParser<R> {
     }
 
     fn parse_entry(&mut self) -> Result<Option<HistoryEntry>, Error> {
+        let mut size = 0;
+
         let (start_line, start_date) = match self.next_start.take() {
             Some(start) => start,
             None => loop {
@@ -91,22 +101,36 @@ impl<R: BufRead> HistoryParser<R> {
         };
 
         while let Some(line) = self.lines.next_line()? {
-            let Some((key, value)) = split_field(&line) else {
-                continue;
-            };
-
-            let action = match key {
-                "Start-Date" => {
+            let field = split_field(&line);
+            match field {
+                Some(("Start-Date", value)) => {
                     self.next_start = Some((self.lines.line(), value.to_string()));
                     break;
                 }
-                "End-Date" => {
+                Some(("End-Date", value)) => {
                     entry.end_time = parse_log_time(value);
                     if entry.end_time.is_none() {
                         problem.get_or_insert_with(|| format!("invalid end date {}", quote(value)));
                     }
                     break;
                 }
+                _ => (),
+            }
+
+            // an entry that is too big gets read to its end, without keeping its contents
+            size += line.len();
+            if size > MAX_ENTRY_SIZE {
+                problem.get_or_insert_with(|| {
+                    format!("entry larger than {} MiB", MAX_ENTRY_SIZE / 1024 / 1024)
+                });
+                entry.packages = Vec::new();
+                continue;
+            }
+
+            let Some((key, value)) = field else {
+                continue;
+            };
+            let action = match key {
                 "Commandline" => {
                     entry.command_line = Some(value.to_string());
                     continue;
@@ -136,6 +160,12 @@ impl<R: BufRead> HistoryParser<R> {
             };
 
             for item in split_package_list(value) {
+                if entry.packages.len() == MAX_ENTRY_CHANGES {
+                    problem.get_or_insert_with(|| {
+                        format!("entry with more than {MAX_ENTRY_CHANGES} package changes")
+                    });
+                    break;
+                }
                 match parse_package_change(action, item) {
                     Ok(change) => entry.packages.push(change),
                     Err(message) => {
@@ -481,6 +511,45 @@ End-Date: 2026-10-23  00:40:51
             .collect();
         // the invalid entry counts too, as the terminal log has a section for it
         assert_eq!(indices, [Some(0), Some(1), None, Some(3), Some(0)]);
+    }
+
+    #[test]
+    fn skip_too_big_entries() {
+        // all lines count, also for entries without an End-Date
+        for line in [
+            "Install: aa:amd64 (1)",
+            "Commandline: apt",
+            "Foo: bar",
+            "no field",
+        ] {
+            let filler = format!("{line}\n").repeat(MAX_ENTRY_SIZE / line.len() + 1);
+            let log = format!(
+                "Start-Date: 2026-10-01  11:33:47\n{filler}End-Date: 2026-10-01  11:34:22\n\
+                 Start-Date: 2026-10-01  11:33:47\n{filler}\
+                 Start-Date: 2026-10-01  11:33:47\nInstall: foo:amd64 (1.0)\n\
+                 End-Date: 2026-10-01  11:34:22\n\
+                 Start-Date: 2026-10-01  11:33:47\n{filler}",
+            );
+            let entries = parse(&log);
+            assert_eq!(entries.len(), 4, "{line}");
+            for result in [&entries[0], &entries[1], &entries[3]] {
+                let Err(Error::Parse { message, .. }) = result else {
+                    panic!("{line}: {result:?}");
+                };
+                assert!(message.contains("larger"), "{line}: {message}");
+            }
+            let entry = entries[2].as_ref().expect("valid entry");
+            assert_eq!((entry.start_index, entry.packages.len()), (2, 1));
+        }
+
+        let log = format!(
+            "Start-Date: 2026-10-01  11:33:47\nDisappeared: {}a\nEnd-Date: 2026-10-01  11:34:22\n",
+            "a, ".repeat(MAX_ENTRY_CHANGES),
+        );
+        let [Err(Error::Parse { message, .. })] = &parse(&log)[..] else {
+            panic!("too many changes not rejected");
+        };
+        assert!(message.contains("more than"), "{message}");
     }
 
     #[test]
