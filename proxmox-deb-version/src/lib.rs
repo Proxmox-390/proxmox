@@ -224,6 +224,90 @@ pub fn cmp_versions(a: &str, b: &str) -> Result<Ordering, ParseError> {
     Ok(cmp_version_parts(&a_parts, &b_parts))
 }
 
+/// A version that is not valid as per deb-version(7), rejected like `dpkg --validate-version` does.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[error("invalid version '{version}' - {reason}")]
+pub struct InvalidVersion {
+    /// The rejected version.
+    pub version: String,
+    /// Why the version is invalid.
+    pub reason: &'static str,
+}
+
+/// Checks a version like `dpkg --validate-version`, which, unlike parsing a [`Version`], also
+/// rejects what dpkg only warns about. Returns it like dpkg understands it, without surrounding
+/// whitespace and with the epoch as plain number, which dpkg also accepts with a sign and leading
+/// zeros.
+///
+/// ```
+/// use proxmox_deb_version::validate_version;
+///
+/// assert_eq!(validate_version(" +01:2.0-1 ").as_deref(), Ok("1:2.0-1"));
+/// assert!(validate_version("2.0_1").is_err());
+/// ```
+pub fn validate_version(version: &str) -> Result<String, InvalidVersion> {
+    let invalid = |reason| {
+        Err(InvalidVersion {
+            version: version.to_string(),
+            reason,
+        })
+    };
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        return invalid("version is empty");
+    }
+    if trimmed.contains(char::is_whitespace) {
+        return invalid("version contains whitespace");
+    }
+    let (epoch, rest) = match trimmed.split_once(':') {
+        Some((epoch, rest)) => {
+            let digits = epoch.strip_prefix(['+', '-']).unwrap_or(epoch);
+            if digits.is_empty() {
+                return invalid("epoch is empty");
+            }
+            if !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return invalid("epoch is not a number");
+            }
+            let number = digits.parse::<u64>().unwrap_or(u64::MAX);
+            if epoch.starts_with('-') && number != 0 {
+                return invalid("epoch is negative");
+            }
+            if number > i32::MAX as u64 {
+                return invalid("epoch is too big");
+            }
+            if rest.is_empty() {
+                return invalid("nothing after the epoch");
+            }
+            (Some(number), rest)
+        }
+        None => (None, trimmed),
+    };
+    let (upstream, revision) = match rest.rsplit_once('-') {
+        Some((_, "")) => return invalid("revision is empty"),
+        Some((upstream, revision)) => (upstream, revision),
+        None => (rest, ""),
+    };
+    if !upstream.starts_with(|c: char| c.is_ascii_digit()) {
+        return invalid("upstream version does not start with a digit");
+    }
+    if !upstream
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '~' | '-' | ':'))
+    {
+        return invalid("invalid character in upstream version");
+    }
+    if !revision
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '~'))
+    {
+        return invalid("invalid character in revision");
+    }
+    Ok(match epoch {
+        Some(epoch) => format!("{epoch}:{rest}"),
+        None => rest.to_string(),
+    })
+}
+
 // Core types and functions that are shared between both approaches
 
 struct VersionParts<'a> {
@@ -450,6 +534,43 @@ mod tests {
 
             // just to be sure check also the non-allocating function to behave the same way.
             assert_eq!(cmp_versions(v1, v2).unwrap(), expected, "{v1} vs {v2}");
+        }
+    }
+
+    #[test]
+    fn test_validate_version() {
+        for invalid in [
+            "",
+            "1 2",
+            "1.0-",
+            "a:1",
+            ":1",
+            "1:",
+            "1:-1",
+            "a1.0",
+            "1.0_1",
+            "1.0-a_b",
+            "1.0:2",
+            "2147483648:1",
+            "99999999999999999999999:1",
+            "-1:1",
+            "+:1",
+            "+-1:1",
+        ] {
+            assert!(validate_version(invalid).is_err(), "{invalid:?}");
+        }
+        for (version, normalized) in [
+            ("1", "1"),
+            ("1:1.0:2", "1:1.0:2"),
+            ("1.0-1-2", "1.0-1-2"),
+            ("1.0+dfsg~rc1-0+deb13u1~bpo1", "1.0+dfsg~rc1-0+deb13u1~bpo1"),
+            ("+1:1", "1:1"),
+            ("01:1", "1:1"),
+            (" 1:1 ", "1:1"),
+            ("-0:1", "0:1"),
+            ("2147483647:1", "2147483647:1"),
+        ] {
+            assert_eq!(validate_version(version).as_deref(), Ok(normalized));
         }
     }
 
