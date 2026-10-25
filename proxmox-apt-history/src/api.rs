@@ -1,5 +1,6 @@
 //! API methods for listing the history of the system and getting the terminal output of its
-//! transactions, for mounting them in the APT API of a node.
+//! transactions and the changelog entries for their package changes, for mounting them in the APT
+//! API of a node.
 //!
 //! The products set the permissions with [`ApiMethod::access`](proxmox_router::ApiMethod::access),
 //! until then only the superuser has access.
@@ -10,7 +11,7 @@ use proxmox_http_error::http_err;
 use proxmox_schema::api;
 use proxmox_schema::api_types::NODE_SCHEMA;
 
-use crate::{HistoryEntry, HistoryListOptions, TermLogFormat};
+use crate::{HistoryEntry, HistoryListOptions, TermLogFormat, TransactionChangelog};
 
 #[api(
     // hardened systems can restrict access to the rotated APT logs or their directory
@@ -96,6 +97,51 @@ async fn blocking<T: Send + 'static>(
         .map_err(|err| format_err!("reading the APT logs failed - {err}"))?
 }
 
+#[api(
+    // hardened systems can restrict access to the rotated APT logs or their directory
+    protected: true,
+    input: {
+        properties: {
+            node: {
+                schema: NODE_SCHEMA,
+            },
+            "start-time": {
+                description: "Start time of the transaction, as listed in the APT history.",
+            },
+            "start-index": {
+                description: "Start index of the transaction, as listed in the APT history.",
+                optional: true,
+                default: 0,
+            },
+        },
+    },
+    returns: {
+        description: "The changelog entries, grouped by source package, upgrades first, then \
+            downgrades, installs and other changes, each sorted by name.",
+        type: Array,
+        items: {
+            type: TransactionChangelog,
+        },
+    },
+)]
+/// Get the changelog entries for the package changes of a past APT transaction, from the changelogs
+/// of the installed packages.
+pub async fn get_transaction_changelogs(
+    start_time: i64,
+    start_index: Option<u32>,
+) -> Result<Vec<TransactionChangelog>, Error> {
+    let start_index = start_index.unwrap_or_default();
+    blocking(move || {
+        crate::get_transaction_changelogs(start_time, start_index)?.ok_or_else(|| {
+            http_err!(
+                NOT_FOUND,
+                "no APT transaction found that started at {start_time} with index {start_index}"
+            )
+        })
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use proxmox_router::{ApiMethod, Permission};
@@ -104,7 +150,11 @@ mod tests {
 
     #[test]
     fn superuser_only_by_default() {
-        for method in [&API_METHOD_LIST_HISTORY, &API_METHOD_GET_TERM_LOG] {
+        for method in [
+            &API_METHOD_LIST_HISTORY,
+            &API_METHOD_GET_TERM_LOG,
+            &API_METHOD_GET_TRANSACTION_CHANGELOGS,
+        ] {
             assert!(matches!(method.access.permission, Permission::Superuser));
             assert!(method.protected);
         }
@@ -153,5 +203,15 @@ mod tests {
             &[node, start, ("start-index", "-1")],
         )
         .expect_err("negative start index");
+
+        parse_query(&API_METHOD_GET_TRANSACTION_CHANGELOGS, &[node, start])
+            .expect("only the start time");
+        parse_query(
+            &API_METHOD_GET_TRANSACTION_CHANGELOGS,
+            &[node, start, ("start-index", "2")],
+        )
+        .expect("all parameters");
+        parse_query(&API_METHOD_GET_TRANSACTION_CHANGELOGS, &[node])
+            .expect_err("missing start time");
     }
 }

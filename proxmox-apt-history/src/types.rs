@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use proxmox_deb_changelog::ChangelogEntry;
 #[cfg(feature = "api-types")]
 use proxmox_schema::api;
 
@@ -177,6 +178,60 @@ fn major_version(version: &str) -> Option<u32> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(upstream.len());
     upstream[..end].parse().ok()
+}
+
+/// The changelog entries for the changes a transaction made to binary packages built from the same
+/// source package, which share its changelog.
+///
+/// Upgrades and downgrades show the entries of the versions they changed between, other changes
+/// with a new version only the newest entry up to that version, as the version of a binary package
+/// can differ from the one of its source package. Changes with different entries, for example as
+/// their old versions differ, are kept apart, and so are changes whose version the changelog does
+/// not list.
+#[cfg_attr(feature = "api-types", api(
+    properties: {
+        packages: {
+            type: Array,
+            items: {
+                type: PackageChange,
+            },
+        },
+        entries: {
+            type: Array,
+            items: {
+                type: ChangelogEntry,
+            },
+        },
+        "unlisted-version": {
+            optional: true,
+            default: false,
+        },
+    },
+))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct TransactionChangelog {
+    /// Name of the source package as its changelog lists it, missing if no changelog is installed
+    /// for the packages, for example as they got removed since, or it could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The changes to the packages, in the order APT logged them.
+    pub packages: Vec<PackageChange>,
+    /// The changelog entries, usually newest first.
+    #[serde(default)]
+    pub entries: Vec<ChangelogEntry>,
+    /// The changelog does not list the version the entries go up to, as for signed kernels or
+    /// packages with their own epoch, so the entries are only its newest one, which can belong to a
+    /// later version.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(
+        feature = "api-types",
+        serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")
+    )]
+    pub unlisted_version: bool,
+    /// Why the changelog could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Format of the terminal output of a transaction.

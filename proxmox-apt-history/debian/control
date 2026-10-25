@@ -8,6 +8,7 @@ Build-Depends-Arch: cargo:native <!nocheck>,
  libstd-rust-dev <!nocheck>,
  librust-flate2-1+default-dev <!nocheck>,
  librust-libc-0.2+default-dev (>= 0.2.107-~~) <!nocheck>,
+ librust-proxmox-deb-changelog-0.1+default-dev <!nocheck>,
  librust-proxmox-time-2+default-dev (>= 2.1.0-~~) <!nocheck>,
  librust-serde-1+default-dev <!nocheck>,
  librust-serde-1+derive-dev <!nocheck>,
@@ -26,6 +27,7 @@ Depends:
  ${misc:Depends},
  librust-flate2-1+default-dev,
  librust-libc-0.2+default-dev (>= 0.2.107-~~),
+ librust-proxmox-deb-changelog-0.1+default-dev,
  librust-proxmox-time-2+default-dev (>= 2.1.0-~~),
  librust-serde-1+default-dev,
  librust-serde-1+derive-dev,
@@ -74,6 +76,7 @@ Multi-Arch: same
 Depends:
  ${misc:Depends},
  librust-proxmox-apt-history-dev (= ${binary:Version}),
+ librust-proxmox-deb-changelog-0.1+api-types-dev,
  librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
  librust-proxmox-schema-5+default-dev (>= 5.7.0-~~),
  librust-proxmox-serde-1+default-dev,
@@ -94,7 +97,8 @@ Depends:
  ${misc:Depends},
  librust-proxmox-apt-history-dev (= ${binary:Version}),
  librust-proxmox-apt-history+api-types-dev (= ${binary:Version}),
- librust-log-0.4+default-dev (>= 0.4.17-~~)
+ librust-log-0.4+default-dev (>= 0.4.17-~~),
+ librust-proxmox-deb-changelog-0.1+impl-dev
 Provides:
  librust-proxmox-apt-history-0+impl-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+impl-dev (= ${binary:Version}),

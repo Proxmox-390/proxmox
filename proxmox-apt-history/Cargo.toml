@@ -14,6 +14,8 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+
+proxmox-deb-changelog.workspace = true
 # NOTE: keep the core dependencies minimal, pull in anything else through an optional feature.
 
 log = { workspace = true, optional = true }
@@ -35,8 +37,8 @@ proxmox-router = { workspace = true, optional = true }
 
 [features]
 default = []
-api-types = ["dep:proxmox-schema", "dep:proxmox-serde"]
-impl = ["api-types", "dep:log"]
+api-types = ["dep:proxmox-schema", "dep:proxmox-serde", "proxmox-deb-changelog/api-types"]
+impl = ["api-types", "dep:log", "proxmox-deb-changelog/impl"]
 api = [
     "impl",
     "dep:anyhow",
