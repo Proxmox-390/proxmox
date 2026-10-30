@@ -55,7 +55,7 @@ mod time;
 mod types;
 #[cfg(feature = "api-types")]
 pub use types::HistoryListOptions;
-pub use types::{HistoryEntry, PackageAction, PackageChange, TermLogFormat};
+pub use types::{HistoryEntry, PackageAction, PackageChange, ReleaseChange, TermLogFormat};
 
 /// Directory in which APT keeps its logs by default.
 pub const APT_LOG_DIR: &str = "/var/log/apt";

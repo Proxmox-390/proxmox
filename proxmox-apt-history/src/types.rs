@@ -136,6 +136,49 @@ pub struct HistoryEntry {
     pub packages: Vec<PackageChange>,
 }
 
+impl HistoryEntry {
+    /// The changes between major releases of Debian and Ceph that the transaction made, like an
+    /// upgrade from Debian 12 to 13, from the major versions of the packages marking them.
+    pub fn release_changes(&self) -> impl Iterator<Item = ReleaseChange> + '_ {
+        self.packages.iter().filter_map(|change| {
+            let (_, name) = RELEASE_PACKAGES
+                .iter()
+                .find(|(package, _)| *package == change.package)?;
+            let old = major_version(change.old_version.as_deref()?)?;
+            let new = major_version(change.new_version.as_deref()?)?;
+            (old != new).then_some(ReleaseChange { name, old, new })
+        })
+    }
+}
+
+/// Packages whose major version is the major release of what they belong to, with its name.
+///
+/// Only Ceph services need `ceph-base`, unlike the client tools in `ceph-common` that Proxmox VE
+/// installs on every node, also without a Ceph cluster.
+const RELEASE_PACKAGES: [(&str, &str); 2] = [("base-files", "Debian"), ("ceph-base", "Ceph")];
+
+/// A change between major releases, see [`HistoryEntry::release_changes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseChange {
+    /// What changed its release, `Debian` or `Ceph`.
+    pub name: &'static str,
+    /// The major release before the change.
+    pub old: u32,
+    /// The major release after the change.
+    pub new: u32,
+}
+
+/// The leading number of the upstream part of a package version.
+fn major_version(version: &str) -> Option<u32> {
+    let upstream = version
+        .split_once(':')
+        .map_or(version, |(_, upstream)| upstream);
+    let end = upstream
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(upstream.len());
+    upstream[..end].parse().ok()
+}
+
 /// Format of the terminal output of a transaction.
 #[cfg_attr(feature = "api-types", api)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -220,5 +263,40 @@ mod tests {
                 "{action:?}"
             );
         }
+    }
+
+    #[test]
+    fn release_changes() {
+        let change = |package: &str, old: Option<&str>, new: Option<&str>| PackageChange {
+            action: PackageAction::Upgrade,
+            package: package.to_string(),
+            arch: None,
+            old_version: old.map(str::to_string),
+            new_version: new.map(str::to_string),
+            automatic: false,
+        };
+        let entry = HistoryEntry {
+            start_time: 0,
+            start_index: 0,
+            end_time: None,
+            command_line: None,
+            requested_by: None,
+            requested_by_uid: None,
+            comment: None,
+            error: None,
+            packages: vec![
+                change("ceph-base", Some("17.2.8-pve2"), Some("19.2.3-1~bpo12+2")),
+                change("base-files", Some("12.4+deb12u13"), Some("13.8+deb13u4")),
+                change("ceph-common", Some("17.2.8-pve2"), Some("19.2.3-pve4")),
+                change("base-files", Some("1:12.4"), Some("2:12.5")),
+                change("ceph-base", None, Some("19.2.3-pve4")),
+                change("base-files", Some("12.4"), Some("x13")),
+            ],
+        };
+        let release = |name, old, new| ReleaseChange { name, old, new };
+        assert_eq!(
+            entry.release_changes().collect::<Vec<_>>(),
+            [release("Ceph", 17, 19), release("Debian", 12, 13)]
+        );
     }
 }
