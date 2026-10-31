@@ -1,3 +1,18 @@
+rust-proxmox-deb-version (0.1.1-1) trixie; urgency=medium
+
+  * compare a version without a Debian revision like dpkg does, as if it had
+    an empty one, so 1.0 equals 1.0-0 and is newer than a backport like
+    1.0-0~bpo1.
+
+  * make equality agree with the ordering, so versions that compare as equal,
+    like 1.01 and 1.1, are also equal for ==.
+
+  * add strict validation of versions, rejecting what dpkg --validate-version
+    rejects, with the reason, and normalizing them like dpkg does. This suits
+    versions entered by users.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 02:32:15 +0100
+
 rust-proxmox-deb-version (0.1.0-1) unstable; urgency=medium
 
   * initial version.
