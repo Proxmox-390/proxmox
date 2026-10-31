@@ -1,5 +1,19 @@
 rust-proxmox-deb-changelog (0.1.0-1) trixie; urgency=medium
 
-  * initial version.
+  * initial release of proxmox-deb-changelog, a crate for parsing the Debian
+    changelogs that installed packages ship, for example to show what changed
+    with an update recorded in the APT history, without network access.
 
- -- Proxmox Support Team <support@proxmox.com>  Sat, 24 Oct 2026 18:16:01 +0200
+  * entries can be limited to a version range like dpkg-parsechangelog selects
+    them, with the limits validated like dpkg does. If the changelog does not
+    list the upper limit, like for signed kernels or packages with an epoch of
+    their own, only its newest entry is selected.
+
+  * parse the changes of an entry into its nested lists, for showing them as
+    lists in the web UIs.
+
+  * the optional `impl` feature reads the changelog of an installed package,
+    merging in binary-only uploads, and the `api` feature provides an API
+    method for it that the Rust based products can mount.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 02:32:15 +0100
