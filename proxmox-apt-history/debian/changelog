@@ -1,5 +1,30 @@
 rust-proxmox-apt-history (0.1.0-1) trixie; urgency=medium
 
-  * initial version.
+  * initial release of proxmox-apt-history, a crate for parsing the history
+    and terminal logs that APT keeps, so the products can show what changed
+    on a system and when, for example to correlate a regression with an
+    update.
 
- -- Proxmox Support Team <support@proxmox.com>  Thu, 22 Oct 2026 23:53:59 +0200
+  * list the transactions of all rotated logs newest first, with their package
+    changes, command line, requesting user and error. Their terminal output
+    can be read as plain text or keeping basic text styles. Damaged logs are
+    read with bounded memory.
+
+  * mark the transactions that changed the major release of Debian or Ceph,
+    and provide the changelog version range of each package change.
+
+  * read the changelogs of all package changes of a transaction at once,
+    grouped by source package, with an API method for it, so a web UI can
+    show them together with a single request.
+
+  * download the changelogs of pending updates from the package repositories,
+    grouped and limited to the new versions like for a transaction, to show
+    what an upgrade brings before installing it. A cache keeps them, so that a
+    request continues where the previous one reached its time limit, and the
+    products can fill it after refreshing the package lists.
+
+  * the optional `api-types` feature provides the API types, also on wasm32
+    for the web UIs, `impl` the library functions and `api` the API methods
+    that the Rust based products can mount.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 02:32:15 +0100
