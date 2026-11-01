@@ -448,6 +448,10 @@ pub struct StringSchema {
     /// Opt-in for multi-line values in single-line config file formats, see
     /// [`StringSchema::multiline`].
     pub multiline: bool,
+    /// Whether the value is a secret or derived from one, like a password, a password hash or an
+    /// API token, which must be kept out of diagnostic output like logs and reports. Purely
+    /// declarative: validation, serialization, permissions and storage are not affected.
+    pub sensitive: bool,
 }
 
 impl StringSchema {
@@ -461,6 +465,7 @@ impl StringSchema {
             format_is_optional: false,
             type_text: None,
             multiline: false,
+            sensitive: false,
         }
     }
 
@@ -506,6 +511,11 @@ impl StringSchema {
     /// still reject every other control character, so the schema's format should exclude those.
     pub const fn multiline(mut self, multiline: bool) -> Self {
         self.multiline = multiline;
+        self
+    }
+
+    pub const fn sensitive(mut self, sensitive: bool) -> Self {
+        self.sensitive = sensitive;
         self
     }
 

@@ -37,6 +37,41 @@ fn ok_string() {
     assert_eq!(TEST_SCHEMA, OkString::API_SCHEMA);
 }
 
+#[api(sensitive: true)]
+/// A secret.
+pub struct Secret(String);
+
+#[test]
+fn secret_string() {
+    const TEST_SCHEMA: ::proxmox_schema::Schema = ::proxmox_schema::StringSchema::new("A secret.")
+        .sensitive(true)
+        .schema();
+    assert_eq!(TEST_SCHEMA, Secret::API_SCHEMA);
+}
+
+#[api(properties: { password: { sensitive: true } })]
+/// A struct with a secret field.
+pub struct WithSecret {
+    /// The password.
+    password: String,
+}
+
+#[test]
+fn secret_field() {
+    const TEST_SCHEMA: ::proxmox_schema::Schema = ::proxmox_schema::ObjectSchema::new(
+        "A struct with a secret field.",
+        &[(
+            "password",
+            false,
+            &::proxmox_schema::StringSchema::new("The password.")
+                .sensitive(true)
+                .schema(),
+        )],
+    )
+    .schema();
+    assert_eq!(TEST_SCHEMA, WithSecret::API_SCHEMA);
+}
+
 #[api]
 /// An example of a simple struct type.
 pub struct TestStruct {
