@@ -55,6 +55,9 @@ fn dump_schema(schema: &Schema) -> Value {
             if let Some(type_text) = string_schema.type_text {
                 data["typetext"] = type_text.into();
             }
+            if string_schema.sensitive {
+                data["sensitive"] = 1.into();
+            }
             match string_schema.format {
                 None | Some(ApiStringFormat::VerifyFn(_)) => { /* do nothing */ }
                 Some(ApiStringFormat::Pattern(const_regex)) => {
