@@ -62,6 +62,28 @@ pub struct PackageChange {
 }
 
 impl PackageChange {
+    /// A pending update of a package from `old_version` to `new_version`, or an install if there is
+    /// no old version, like APT lists the available updates.
+    pub fn pending_update(
+        package: String,
+        arch: Option<String>,
+        old_version: Option<String>,
+        new_version: String,
+    ) -> Self {
+        let old_version = old_version.filter(|version| !version.is_empty());
+        Self {
+            action: match old_version {
+                Some(_) => PackageAction::Upgrade,
+                None => PackageAction::Install,
+            },
+            package,
+            arch,
+            old_version,
+            new_version: Some(new_version),
+            automatic: false,
+        }
+    }
+
     /// The versions of the changelog entries that came with the change, those later than the first
     /// one and up to including the second one, or `None` for the first one if there is no earlier
     /// version, like for installs. The entries of a downgrade are the ones it reverted. Returns
@@ -211,8 +233,9 @@ fn major_version(version: &str) -> Option<u32> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TransactionChangelog {
-    /// Name of the source package as its changelog lists it, missing if no changelog is installed
-    /// for the packages, for example as they got removed since, or it could not be read.
+    /// Name of the source package as its changelog lists it, or as APT names it for a changelog
+    /// that could not be downloaded. Missing if no changelog is installed for the packages, for
+    /// example as they got removed since, or if the source package is not known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     /// The changes to the packages, in the order APT logged them.

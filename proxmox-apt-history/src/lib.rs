@@ -28,6 +28,11 @@ mod changelogs;
 pub use changelogs::get_transaction_changelogs;
 
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+mod update_changelogs;
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+pub use update_changelogs::get_update_changelogs;
+
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod logs;
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 pub use logs::{get_term_log, list_history};

@@ -25,16 +25,38 @@ pub fn get_transaction_changelogs(
         .into_iter()
         .find(|entry| entry.start_index == start_index);
 
-    Ok(transaction
-        .map(|transaction| group_changelogs(transaction.packages, read_installed_changelog)))
+    Ok(transaction.map(|transaction| {
+        group_changelogs(transaction.packages, |change| {
+            match read_installed_changelog(&change.package) {
+                // for example removed since, or installed without its documentation
+                Err(proxmox_deb_changelog::Error::NotFound(_)) => Ok(None),
+                result => result.map(Some).map_err(|err| err.to_string().into()),
+            }
+        })
+    }))
 }
 
-/// Groups the package changes that show the same entries of the same source package, reading the
-/// changelogs with `read`, upgrades first, then downgrades, installs and other changes, each by
-/// name.
-fn group_changelogs(
+/// Why a changelog could not be read, with its source package if known.
+pub(crate) struct ReadError {
+    pub source: Option<String>,
+    pub message: String,
+}
+
+impl From<String> for ReadError {
+    fn from(message: String) -> Self {
+        Self {
+            source: None,
+            message,
+        }
+    }
+}
+
+/// Groups the package changes that show the same entries, or got the same error, for the same
+/// source package, reading the changelogs with `read`, upgrades first, then downgrades, installs
+/// and other changes, each by name.
+pub(crate) fn group_changelogs<E: AsRef<[ChangelogEntry]>>(
     changes: Vec<PackageChange>,
-    mut read: impl FnMut(&str) -> Result<Vec<ChangelogEntry>, proxmox_deb_changelog::Error>,
+    mut read: impl FnMut(&PackageChange) -> Result<Option<E>, ReadError>,
 ) -> Vec<TransactionChangelog> {
     let mut groups: Vec<TransactionChangelog> = Vec::new();
 
@@ -49,13 +71,14 @@ fn group_changelogs(
             unlisted_version: false,
             error: None,
         };
-        match read(&change.package) {
-            Ok(entries) => {
+        match read(&change) {
+            Ok(Some(entries)) => {
+                let entries = entries.as_ref();
                 group.source = entries.first().map(|entry| entry.package.clone());
                 match VersionRange::new(since, Some(to)) {
                     Ok(range) => {
-                        group.unlisted_version = !range.is_listed(&entries);
-                        let selected = range.select(&entries).cloned();
+                        group.unlisted_version = !range.is_listed(entries);
+                        let selected = range.select(entries).cloned();
                         group.entries = match since {
                             Some(_) => selected.collect(),
                             None => selected.take(1).collect(),
@@ -64,15 +87,16 @@ fn group_changelogs(
                     Err(err) => group.error = Some(err.to_string()),
                 }
             }
-            // for example removed since, or installed without its documentation
-            Err(proxmox_deb_changelog::Error::NotFound(_)) => (),
-            Err(err) => group.error = Some(err.to_string()),
+            Ok(None) => (),
+            Err(err) => {
+                group.source = err.source;
+                group.error = Some(err.message);
+            }
         }
 
         let same = groups.iter_mut().find(|other| {
             group.source.is_some()
-                && group.error.is_none()
-                && other.error.is_none()
+                && other.error == group.error
                 && other.source == group.source
                 && other.entries == group.entries
                 && other.unlisted_version == group.unlisted_version
@@ -189,7 +213,10 @@ mod tests {
                 change(Upgrade, "foo-doc", Some("1.0-1"), Some("3.0-1")),
                 change(Upgrade, "signed", Some("1.0+1"), Some("2.0+1")),
             ],
-            read,
+            |change| match read(&change.package) {
+                Err(ChangelogError::NotFound(_)) => Ok(None),
+                result => result.map(Some).map_err(|err| err.to_string().into()),
+            },
         );
 
         let summary: Vec<_> = groups
