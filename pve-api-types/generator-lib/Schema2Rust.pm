@@ -1125,6 +1125,9 @@ my sub string_type : prototype($$$$) {
     if (defined(my $text = delete $schema->{default})) {
         $api_props->{default} = quote_string($text);
     }
+    if (delete $schema->{sensitive}) {
+        $api_props->{sensitive} = true;
+    }
 
     # pub enum ApiStringFormat {
     #     /// Enumerate all valid strings
