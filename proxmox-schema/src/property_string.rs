@@ -99,7 +99,7 @@ pub(crate) fn parse_quoted_string<'s>(data: &'_ mut &'s str) -> Result<Cow<'s, s
     let data_out = data;
     let data = data_out.as_bytes();
 
-    if data[0] != b'"' {
+    if data.is_empty() || data[0] != b'"' {
         return Err(Error::msg("not a quoted string"));
     }
 
@@ -151,8 +151,8 @@ pub(crate) fn parse_quoted_string<'s>(data: &'_ mut &'s str) -> Result<Cow<'s, s
     Ok(Cow::Owned(unsafe { String::from_utf8_unchecked(out) }))
 }
 
-/// Counterpart to `parse_quoted_string`, only supporting the above-supported escape sequences.
-/// Returns `true`
+/// Counterpart to [`parse_quoted_string`]; writes the escaped contents without the surrounding
+/// double quotes.
 pub(crate) fn quote<T: fmt::Write>(s: &str, out: &mut T) -> fmt::Result {
     for b in s.chars() {
         match b {
@@ -163,6 +163,32 @@ pub(crate) fn quote<T: fmt::Write>(s: &str, out: &mut T) -> fmt::Result {
         }
     }
     Ok(())
+}
+
+/// Wrap a string in double quotes, escaping `"`, `\` and newline. The counterpart is
+/// [`parse_quoted_value`].
+///
+/// All other characters, control characters such as `\r` or `\t` included, pass through verbatim;
+/// callers that must not store those have to reject them themselves.
+pub fn quote_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    quote(value, &mut out).expect("writing to a String cannot fail");
+    out.push('"');
+    out
+}
+
+/// Parse a complete quoted value as produced by [`quote_string`].
+///
+/// The entire input must be a single double-quoted string, anything else is an error. Without
+/// escape sequences the result borrows the input.
+pub fn parse_quoted_value(value: &str) -> Result<Cow<'_, str>, Error> {
+    let mut rest = value;
+    let decoded = parse_quoted_string(&mut rest)?;
+    if !rest.is_empty() {
+        return Err(Error::msg("unexpected text after quoted string"));
+    }
+    Ok(decoded)
 }
 
 /// Like `str::split_at` but with assumes `mid` points to an ASCII character and the 2nd slice
@@ -177,6 +203,26 @@ fn ascii_split_off<'s>(s: &mut &'s str, mid: usize) -> &'s str {
     let (a, b) = ascii_split_around(s, mid);
     *s = b;
     a
+}
+
+#[test]
+fn parse_quoted_string_edge_cases() {
+    for bad in ["", "\"", "\"unterminated", "hello", "\"bad escape \\t\""] {
+        let mut cursor = bad;
+        assert!(parse_quoted_string(&mut cursor).is_err(), "input: {bad:?}");
+    }
+}
+
+#[test]
+fn quoted_value_roundtrip() {
+    let original = "line1\nline2 with \"quote\" and \\ backslash";
+    let quoted = quote_string(original);
+    assert_eq!(quoted, r#""line1\nline2 with \"quote\" and \\ backslash""#);
+    assert_eq!(parse_quoted_value(&quoted).unwrap(), original);
+
+    assert!(parse_quoted_value("\"x\" ").is_err());
+    assert!(parse_quoted_value("\"x\" y").is_err());
+    assert!(parse_quoted_value("bare").is_err());
 }
 
 #[test]
