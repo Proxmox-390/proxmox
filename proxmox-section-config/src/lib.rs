@@ -20,6 +20,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -31,6 +32,7 @@ use serde_json::{Value, json};
 
 use proxmox_lang::try_block;
 use proxmox_schema::format::{ParameterDisplayStyle, dump_properties, wrap_text};
+use proxmox_schema::property_string::{parse_quoted_value, quote_string};
 use proxmox_schema::*;
 
 pub mod typed;
@@ -281,6 +283,10 @@ impl SectionConfig {
     }
 
     /// Create a new `SectionConfig` using a custom syntax.
+    ///
+    /// For string schemas that set [`StringSchema::multiline`], values that need it reach
+    /// `format_section_content` as a quoted, escaped single line. To get them decoded again,
+    /// `parse_section_content` has to return exactly that quoted text as value.
     pub fn with_custom_syntax(
         id_schema: &'static Schema,
         parse_section_header: fn(&str) -> Option<(String, String)>,
@@ -395,6 +401,9 @@ impl SectionConfig {
                         {
                             continue; // id and type are part of the section header
                         }
+                        let escaped =
+                            multiline_escape(plugin.properties, section_config, key, value);
+                        let value = escaped.as_ref().unwrap_or(value);
                         raw += &(self.format_section_content)(type_name, section_id, key, value)?;
                     }
                 }
@@ -596,8 +605,14 @@ impl SectionConfig {
             None if schema.additional_properties() => (false, &ADDITIONAL_PROPERTY_SCHEMA),
             None => bail!("unknown property '{}'", key),
         };
+        let value = if is_array {
+            // array items are written as repeated bare lines, never in the quoted form
+            Cow::Borrowed(value)
+        } else {
+            multiline_unescape(prop_schema, value)
+        };
         let value = prop_schema
-            .parse_simple_value(value)
+            .parse_simple_value(&value)
             .map_err(|err| format_err!("property '{}': {}", key, err))?;
 
         if is_array {
@@ -855,6 +870,40 @@ impl SectionConfig {
     }
 }
 
+/// Return the quoted single-line form for values of multi-line-aware string schemas that would
+/// not survive a bare round-trip: values with newlines, with surrounding whitespace (bare values
+/// get trimmed on read) or with a leading double quote (bare values get decoded on read).
+/// Otherwise return `None` so the caller keeps the value unchanged.
+fn multiline_escape(
+    schema: &dyn ObjectSchemaType,
+    data: &Value,
+    key: &str,
+    value: &Value,
+) -> Option<Value> {
+    let text = value.as_str()?;
+    let multiline = matches!(
+        schema.lookup_schema(key, data),
+        Some((_, Schema::String(s))) if s.multiline
+    );
+    if !multiline || (!text.contains('\n') && text == text.trim() && !text.starts_with('"')) {
+        return None;
+    }
+    Some(Value::String(quote_string(text)))
+}
+
+/// Reverse of [`multiline_escape`]: decode a quoted value for schemas that opt in. A value that
+/// does not decode cleanly is kept literal, so pre-existing configs whose values merely begin
+/// with a double quote keep their meaning.
+fn multiline_unescape<'v>(prop_schema: &Schema, value: &'v str) -> Cow<'v, str> {
+    if value.starts_with('"')
+        && matches!(prop_schema, Schema::String(s) if s.multiline)
+        && let Ok(decoded) = parse_quoted_value(value)
+    {
+        return decoded;
+    }
+    Cow::Borrowed(value)
+}
+
 // cargo test test_section_config1 -- --nocapture
 #[test]
 fn test_section_config1() {
@@ -910,6 +959,185 @@ lvmthin: local-lvm2
     println!("RES: {res:?}");
     let raw = config.write(filename, &res.unwrap());
     println!("CONFIG:\n{}", raw.unwrap());
+}
+
+#[cfg(test)]
+fn multiline_test_config() -> SectionConfig {
+    const COMMENT_SCHEMA: Schema = StringSchema::new("Free-form comment.")
+        .multiline(true)
+        .schema();
+    const PATH_SCHEMA: Schema = StringSchema::new("Datastore path.").schema();
+    const PROPERTIES: ObjectSchema = ObjectSchema::new(
+        "store properties",
+        &[
+            ("comment", true, &COMMENT_SCHEMA),
+            ("path", true, &PATH_SCHEMA),
+        ],
+    )
+    .property_aliases(&[("note", "comment")]);
+    const ID_SCHEMA: Schema = StringSchema::new("store id").min_length(1).schema();
+
+    let mut config = SectionConfig::new(&ID_SCHEMA);
+    config.register_plugin(SectionConfigPlugin::new(
+        "store".to_string(),
+        None,
+        &PROPERTIES,
+    ));
+    config
+}
+
+#[test]
+fn test_section_config_multiline_value() {
+    let filename = "datastore.cfg";
+    let config = multiline_test_config();
+
+    let raw = concat!(
+        "store: one\n",
+        // hits all three escape sequences: newline, double quote, backslash
+        "\tcomment \"line1\\nline2 with \\\"quote\\\" and \\\\ backslash\\nline3\"\n",
+        "\tpath /mnt/one\n",
+        "\n",
+        "store: two\n",
+        // a bare single-line value keeps its previous form
+        "\tcomment short note\n",
+        "\tpath /mnt/two\n",
+    );
+
+    let parsed = config.parse(filename, raw).expect("parse");
+
+    let one = parsed.sections.get("one").expect("section one").1.clone();
+    assert_eq!(
+        one["comment"],
+        Value::String("line1\nline2 with \"quote\" and \\ backslash\nline3".into()),
+    );
+
+    let two = parsed.sections.get("two").expect("section two").1.clone();
+    assert_eq!(two["comment"], Value::String("short note".into()));
+
+    let rewritten = config.write(filename, &parsed).expect("write");
+    assert_eq!(rewritten, raw);
+}
+
+#[test]
+fn test_section_config_multiline_without_opt_in_still_fails() {
+    let config = multiline_test_config();
+
+    let mut data = SectionConfigData::new();
+    data.set_data("x", "store", json!({"path": "line1\nline2"}))
+        .unwrap();
+    data.record_order("x");
+
+    assert!(config.write("test.cfg", &data).is_err());
+}
+
+#[test]
+fn test_section_config_multiline_quoting_roundtrip() {
+    let filename = "rt.cfg";
+    let config = multiline_test_config();
+
+    // values a bare line would not reproduce, see `multiline_escape`
+    for value in [
+        "\"whole\"",
+        "\"a\\nb\"",
+        "\"important\" tag",
+        " \"x\" y",
+        "  padded  ",
+        " ",
+    ] {
+        let mut data = SectionConfigData::new();
+        data.set_data("x", "store", json!({ "comment": value }))
+            .unwrap();
+        data.record_order("x");
+
+        let written = config.write(filename, &data).expect("write");
+        let parsed = config.parse(filename, &written).expect("parse");
+        let comment = &parsed.sections.get("x").expect("section x").1["comment"];
+        assert_eq!(comment, &Value::String(value.into()), "value: {value:?}");
+    }
+}
+
+#[test]
+fn test_section_config_multiline_legacy_leading_quote() {
+    let filename = "legacy.cfg";
+    let config = multiline_test_config();
+
+    // a pre-existing value that merely begins with a double quote keeps its meaning
+    let raw = "store: a\n\tcomment \"not escaped\" legacy\n";
+    let parsed = config.parse(filename, raw).expect("parse");
+    let comment = &parsed.sections.get("a").expect("section a").1["comment"];
+    assert_eq!(comment, &Value::String("\"not escaped\" legacy".into()));
+
+    // while one that parses as a complete quoted string is decoded; opting in an existing
+    // field accepts this corner case
+    let raw = "store: b\n\tcomment \"whole\"\n";
+    let parsed = config.parse(filename, raw).expect("parse");
+    let comment = &parsed.sections.get("b").expect("section b").1["comment"];
+    assert_eq!(comment, &Value::String("whole".into()));
+}
+
+#[test]
+fn test_section_config_multiline_one_of_variant() {
+    use proxmox_schema::{ApiStringFormat, EnumEntry, OneOfSchema};
+
+    static TYPE_SCHEMA: Schema = StringSchema::new("Type.")
+        .format(&ApiStringFormat::Enum(&[
+            EnumEntry::new("a", "Type A"),
+            EnumEntry::new("b", "Type B"),
+        ]))
+        .schema();
+    static NOTE_MULTILINE: Schema = StringSchema::new("Note.").multiline(true).schema();
+    static NOTE_PLAIN: Schema = StringSchema::new("Note.").schema();
+    static VARIANT_A: Schema = ObjectSchema::new("A", &[("note", false, &NOTE_MULTILINE)]).schema();
+    static VARIANT_B: Schema = ObjectSchema::new("B", &[("note", false, &NOTE_PLAIN)]).schema();
+    static ONE_OF: OneOfSchema = OneOfSchema::new(
+        "A or B.",
+        &("type", false, &TYPE_SCHEMA),
+        &[("a", &VARIANT_A), ("b", &VARIANT_B)],
+    );
+
+    // the opt-in must follow the active variant, not the first variant defining the key
+    let section = json!({"type": "a", "note": "x\ny"});
+    assert!(multiline_escape(&ONE_OF, &section, "note", &section["note"]).is_some());
+
+    let section = json!({"type": "b", "note": "x\ny"});
+    assert!(multiline_escape(&ONE_OF, &section, "note", &section["note"]).is_none());
+}
+
+#[test]
+fn test_section_config_multiline_aliased_property() {
+    let filename = "alias.cfg";
+    let config = multiline_test_config();
+
+    // a quoted value under the deprecated alias is decoded and canonicalized
+    let raw = "store: a\n\tnote \"line1\\nline2\"\n";
+    let parsed = config.parse(filename, raw).expect("parse");
+    let section = &parsed.sections.get("a").expect("section a").1;
+    assert_eq!(section["comment"], Value::String("line1\nline2".into()));
+    assert!(section.get("note").is_none());
+}
+
+#[test]
+fn test_section_config_multiline_array_items_stay_literal() {
+    let filename = "array.cfg";
+
+    const ITEM_SCHEMA: Schema = StringSchema::new("List entry.").multiline(true).schema();
+    const LIST_SCHEMA: Schema = ArraySchema::new("List.", &ITEM_SCHEMA).schema();
+    const PROPERTIES: ObjectSchema =
+        ObjectSchema::new("store properties", &[("list", true, &LIST_SCHEMA)]);
+
+    let plugin = SectionConfigPlugin::new("store".to_string(), None, &PROPERTIES);
+    const ID_SCHEMA: Schema = StringSchema::new("id").min_length(1).schema();
+    let mut config = SectionConfig::new(&ID_SCHEMA);
+    config.register_plugin(plugin);
+
+    // array items are written as bare lines, so their leading quotes stay literal
+    let raw = "store: a\n\tlist \"x\"\n\tlist plain\n";
+    let parsed = config.parse(filename, raw).expect("parse");
+    let section = &parsed.sections.get("a").expect("section a").1;
+    assert_eq!(section["list"], json!(["\"x\"", "plain"]));
+
+    let rewritten = config.write(filename, &parsed).expect("write");
+    assert_eq!(rewritten, raw);
 }
 
 // cargo test test_section_config2 -- --nocapture
