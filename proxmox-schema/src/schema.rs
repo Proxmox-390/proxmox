@@ -445,6 +445,9 @@ pub struct StringSchema {
     pub format_is_optional: bool,
     /// A text representation of the format/type (used to generate documentation).
     pub type_text: Option<&'static str>,
+    /// Opt-in for multi-line values in single-line config file formats, see
+    /// [`StringSchema::multiline`].
+    pub multiline: bool,
 }
 
 impl StringSchema {
@@ -457,6 +460,7 @@ impl StringSchema {
             format: None,
             format_is_optional: false,
             type_text: None,
+            multiline: false,
         }
     }
 
@@ -492,6 +496,16 @@ impl StringSchema {
 
     pub const fn format_is_optional(mut self, is_optional: bool) -> Self {
         self.format_is_optional = is_optional;
+        self
+    }
+
+    /// Opt in to multi-line values in single-line config file formats.
+    ///
+    /// `proxmox-section-config` and `proxmox-simple-config` store such values as a quoted, escaped
+    /// single line instead of rejecting them; validation is unaffected. The section config writers
+    /// still reject every other control character, so the schema's format should exclude those.
+    pub const fn multiline(mut self, multiline: bool) -> Self {
+        self.multiline = multiline;
         self
     }
 
