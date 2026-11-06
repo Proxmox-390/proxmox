@@ -52,6 +52,10 @@ const_regex! {
     pub GROUP_OR_SNAPSHOT_PATH_REGEX = concatcp!(r"^", GROUP_OR_SNAPSHOT_PATH_REGEX_STR, r"$");
 
     pub DATASTORE_MAP_REGEX = concatcp!(r"^(?:", PROXMOX_SAFE_ID_REGEX_STR, r"=)?", PROXMOX_SAFE_ID_REGEX_STR, r"$");
+
+    /// Multi-line text without control characters besides the newline, so the section config
+    /// writer can store every valid value. Uses `\p{Cc}` as `[:cntrl:]` only covers ASCII.
+    pub DATASTORE_COMMENT_REGEX = r"\A(?:[^\p{Cc}]|\n)*\z";
 }
 
 pub const CHUNK_DIGEST_FORMAT: ApiStringFormat = ApiStringFormat::Pattern(&SHA256_HEX_REGEX);
@@ -118,6 +122,17 @@ pub const DATASTORE_SCHEMA: Schema = StringSchema::new("Datastore name.")
     .min_length(3)
     .max_length(32)
     .schema();
+
+pub const DATASTORE_COMMENT_FORMAT: ApiStringFormat =
+    ApiStringFormat::Pattern(&DATASTORE_COMMENT_REGEX);
+
+pub const DATASTORE_COMMENT_SCHEMA: Schema = StringSchema::new(
+    "Datastore comment (may span multiple lines and contain markdown formatting).",
+)
+.format(&DATASTORE_COMMENT_FORMAT)
+.multiline(true)
+.max_length(8 * 1024)
+.schema();
 
 pub const CHUNK_DIGEST_SCHEMA: Schema = StringSchema::new("Chunk digest (SHA256).")
     .format(&CHUNK_DIGEST_FORMAT)
@@ -477,7 +492,7 @@ pub const MAX_SNAPSHOT_TIME_SKEW_SCHEMA: Schema =
         },
         comment: {
             optional: true,
-            schema: SINGLE_LINE_COMMENT_SCHEMA,
+            schema: DATASTORE_COMMENT_SCHEMA,
         },
         "gc-schedule": {
             optional: true,
@@ -2280,6 +2295,30 @@ impl ApiType for BackupArchiveName {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_datastore_comment_schema() {
+        // every value the schema accepts must be storable, so control characters other than
+        // the newline have to be rejected up front
+        DATASTORE_COMMENT_SCHEMA
+            .parse_simple_value("multi\nline\nnote")
+            .expect("newlines are allowed");
+        assert!(
+            DATASTORE_COMMENT_SCHEMA
+                .parse_simple_value("tab\tseparated")
+                .is_err()
+        );
+        assert!(
+            DATASTORE_COMMENT_SCHEMA
+                .parse_simple_value("clean\n\x07dirty")
+                .is_err()
+        );
+        assert!(
+            DATASTORE_COMMENT_SCHEMA
+                .parse_simple_value("c1 \u{85} control")
+                .is_err()
+        );
+    }
 
     #[test]
     fn test_invalid_backup_archive_names() {
