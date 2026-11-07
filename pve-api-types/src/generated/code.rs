@@ -917,6 +917,12 @@ pub trait PveClient {
         Err(Error::Other("get_task_status not implemented"))
     }
 
+    /// Get the changelog entries for pending updates, grouped by source
+    /// package.
+    async fn get_update_changelogs(&self, node: &str) -> Result<Vec<TransactionChangelog>, Error> {
+        Err(Error::Other("get_update_changelogs not implemented"))
+    }
+
     /// Get the MAC VRF for a VNet in an EVPN zone.
     async fn get_vnet_mac_vrf(&self, node: &str, vnet: &str) -> Result<Vec<SdnVnetMacVrf>, Error> {
         Err(Error::Other("get_vnet_mac_vrf not implemented"))
@@ -2848,6 +2854,16 @@ where
             "/api2/extjs/nodes/{}/tasks/{}/status",
             percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC),
             percent_encode(upid.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        );
+        Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
+    /// Get the changelog entries for pending updates, grouped by source
+    /// package.
+    async fn get_update_changelogs(&self, node: &str) -> Result<Vec<TransactionChangelog>, Error> {
+        let url = &format!(
+            "/api2/extjs/nodes/{}/apt/update-changelogs",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
         );
         Ok(self.0.get(url).await?.expect_json()?.data)
     }
