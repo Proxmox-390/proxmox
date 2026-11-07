@@ -27,6 +27,7 @@ Depends:
  librust-serde-1+derive-dev,
  librust-thiserror-2+default-dev
 Suggests:
+ librust-proxmox-access-log+api-dev (= ${binary:Version}),
  librust-proxmox-access-log+api-types-dev (= ${binary:Version}),
  librust-proxmox-access-log+query-dev (= ${binary:Version})
 Provides:
@@ -39,6 +40,27 @@ Provides:
  librust-proxmox-access-log-0.1.0+default-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - Rust source code
  Source code for Debianized Rust crate "proxmox-access-log"
+
+Package: librust-proxmox-access-log+api-dev
+Architecture: any
+Multi-Arch: same
+Depends:
+ ${misc:Depends},
+ librust-proxmox-access-log-dev (= ${binary:Version}),
+ librust-proxmox-access-log+api-types-dev (= ${binary:Version}),
+ librust-proxmox-access-log+query-dev (= ${binary:Version}),
+ librust-proxmox-router-3+default-dev (>= 3.4.0-~~),
+ librust-serde-json-1+default-dev,
+ librust-tokio-1+default-dev (>= 1.6-~~),
+ librust-tokio-1+rt-dev (>= 1.6-~~),
+ librust-tokio-1+sync-dev (>= 1.6-~~)
+Provides:
+ librust-proxmox-access-log-0+api-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1+api-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1.0+api-dev (= ${binary:Version})
+Description: Parser for the API access logs of Proxmox products - feature "api"
+ This metapackage enables feature "api" for the Rust proxmox-access-log crate,
+ by pulling in any additional dependencies needed by that feature.
 
 Package: librust-proxmox-access-log+api-types-dev
 Architecture: any

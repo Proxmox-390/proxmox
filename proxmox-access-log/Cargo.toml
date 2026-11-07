@@ -18,9 +18,12 @@ libc = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 percent-encoding.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
+tokio = { workspace = true, optional = true, features = ["rt", "sync"] }
 zstd = { workspace = true, optional = true }
 
+proxmox-router = { workspace = true, optional = true }
 proxmox-schema = { workspace = true, optional = true, features = ["api-macro", "api-types"] }
 
 [dev-dependencies]
@@ -28,8 +31,17 @@ serde_json.workspace = true
 
 [features]
 default = []
+api = ["api-types", "query", "dep:proxmox-router", "dep:serde_json", "dep:tokio"]
 api-types = ["dep:proxmox-schema"]
 query = ["dep:anyhow", "dep:flate2", "dep:libc", "dep:log", "dep:zstd"]
+
+[[test]]
+name = "api"
+required-features = ["api"]
+
+[[test]]
+name = "api_path"
+required-features = ["api"]
 
 [[test]]
 name = "query"

@@ -39,6 +39,8 @@ mod result;
 mod stats;
 mod time;
 
+#[cfg(feature = "api")]
+mod api;
 #[cfg(feature = "query")]
 mod query;
 
@@ -53,6 +55,8 @@ pub use stats::{
     MAX_HISTOGRAM_BUCKETS, MAX_STATS_TOP, StatsList, StatsOptions, StatsRow, StopReason,
 };
 
+#[cfg(feature = "api")]
+pub use api::{API_METHOD_GET_ACCESS_LOG, API_METHOD_GET_ACCESS_LOG_STATS, init_access_log_api};
 #[cfg(feature = "query")]
 pub use query::{
     InvalidRequest, MAX_PARSE_BYTES, MAX_READ_BYTES, log_files, query, query_newer, stats,
