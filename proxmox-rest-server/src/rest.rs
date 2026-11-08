@@ -1228,6 +1228,12 @@ fn extract_compression_method(headers: &http::HeaderMap) -> Option<CompressionMe
     None
 }
 
+/// Checks the target as sent, not the normalized path, as the access log keeps the former and cuts
+/// it at the same length.
+fn request_target_too_long(uri: &hyper::Uri) -> bool {
+    uri.path_and_query().map_or(0, |pq| pq.as_str().len()) > MAX_URI_QUERY_LENGTH
+}
+
 impl ApiConfig {
     pub async fn handle_request(
         self: Arc<ApiConfig>,
@@ -1238,16 +1244,15 @@ impl ApiConfig {
         let request_start = Instant::now();
         let (parts, body) = req.into_parts();
         let method = parts.method.clone();
-        let path = normalize_path(parts.uri.path())?;
-        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-        let query = parts.uri.query().unwrap_or_default();
-        if path.len() + query.len() > MAX_URI_QUERY_LENGTH {
+        if request_target_too_long(&parts.uri) {
             return Ok(Response::builder()
                 .status(StatusCode::URI_TOO_LONG)
                 .body(Body::empty())
                 .unwrap());
         }
+
+        let path = normalize_path(parts.uri.path())?;
+        let components: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         let env_type = self.env_type();
         let mut rpcenv = RestEnvironment::new(env_type, Arc::clone(&self));
@@ -1828,6 +1833,27 @@ mod tests {
                 "failed for {file}"
             );
         }
+    }
+
+    #[test]
+    fn the_length_limit_applies_to_the_target_as_sent() {
+        let too_long = |target: String| request_target_too_long(&target.parse().unwrap());
+
+        // the slashes would normalize away, hiding the endpoint behind the logged prefix
+        assert!(too_long(format!(
+            "{}api2/json/version",
+            "/".repeat(MAX_URI_QUERY_LENGTH)
+        )));
+        assert!(!too_long(format!(
+            "/{}",
+            "a".repeat(MAX_URI_QUERY_LENGTH - 1)
+        )));
+        assert!(too_long(format!("/{}", "a".repeat(MAX_URI_QUERY_LENGTH))));
+        // the query separator counts too
+        assert!(too_long(format!(
+            "/a?{}",
+            "b".repeat(MAX_URI_QUERY_LENGTH - 2)
+        )));
     }
 
     #[test]
