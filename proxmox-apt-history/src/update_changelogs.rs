@@ -1,10 +1,21 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::io::{self, Read};
+use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 
 use proxmox_deb_changelog::{
     ChangelogEntry, VersionRange, parse_changelog, read_installed_changelog,
@@ -15,12 +26,17 @@ use crate::{PackageAction, PackageChange, TransactionChangelog};
 
 // as for decompressed installed changelogs
 const MAX_CHANGELOG_SIZE: u64 = 16 * 1024 * 1024;
-const MAX_DOWNLOADS: usize = 6;
 // below the 30 second timeout for proxied API requests, so that the result still arrives
 const TIMEOUT: Duration = Duration::from_secs(25);
+// bounds the downloads a run keeps in /tmp, often a tmpfs, and the memory to read them
+const MAX_BATCH: usize = 32;
+// what the downloads of a run may take in /tmp, as APT does not limit the size of a changelog
+const MAX_ROUND_SIZE: u64 = 4 * MAX_CHANGELOG_SIZE;
+const TOO_LARGE: &str = "Downloaded changelog is too large";
 const TIMED_OUT: &str = "Changelog download timed out";
-const NOT_STARTED: &str =
-    "Changelog download did not start - the time limit for all downloads was reached";
+const NOT_STARTED: &str = "Changelog download did not start before the time limit - load the changelogs again to continue";
+const NOT_IN_LISTS: &str = "Package version not found in the package lists - refresh the updates";
+const NOT_AVAILABLE: &str = "Changelog not available from the repository";
 
 type Entries = Result<Vec<ChangelogEntry>, String>;
 
@@ -32,18 +48,27 @@ type Entries = Result<Vec<ChangelogEntry>, String>;
 /// failures are returned in the affected groups, without preventing other changelogs from being
 /// shown.
 ///
-/// APT resolves the changelog locations in one invocation. Changelogs sharing a URI are downloaded
-/// once, with at most six downloads in parallel, using the proxy and authentication configuration
-/// of APT. If resolution is incomplete, packages are fetched separately so failures remain per
-/// package. Downloads that do not finish within 25 seconds in total fail and those not started by
-/// then are skipped, so that the result stays within the timeout of proxied API requests.
-pub fn get_update_changelogs(changes: Vec<PackageChange>) -> Vec<TransactionChangelog> {
+/// APT resolves the changelog locations and downloads all changelogs not in `cache_dir` in one run,
+/// which reuses the connections to each repository and applies the proxy and authentication
+/// configuration of APT. Changelogs sharing a URI are downloaded once. Downloads that do not finish
+/// within 25 seconds in total fail and those not started by then are skipped, so that the result
+/// stays within the timeout of proxied API requests. As the changelog of a version does not change,
+/// downloaded ones are kept in `cache_dir`, so that a following request continues where this one
+/// stopped. It starts the downloads that did not finish in time last, so that a large changelog on
+/// a slow link does not hold up the others. The cache only keeps the changelogs of the pending
+/// updates of the latest request.
+pub fn get_update_changelogs(
+    changes: Vec<PackageChange>,
+    cache_dir: &Path,
+) -> Vec<TransactionChangelog> {
     let deadline = Instant::now() + TIMEOUT;
+    let cache = Cache::open(cache_dir);
     download_changelogs(
         changes,
         deadline,
+        cache.as_ref(),
         |packages| resolve_locations(packages, deadline),
-        |package| apt_changelog(&[package.to_string()], false, deadline).map(|output| output.0),
+        |jobs| apt_download(jobs, deadline),
         |package| match read_installed_changelog(package) {
             Err(proxmox_deb_changelog::Error::NotFound(_)) => Ok(None),
             result => result.map(Some).map_err(|err| err.to_string()),
@@ -51,10 +76,34 @@ pub fn get_update_changelogs(changes: Vec<PackageChange>) -> Vec<TransactionChan
     )
 }
 
-/// Where APT downloads the changelog of a package from, and the source package it names.
+/// Where APT downloads the changelog of a package from, and the file it names it, the source
+/// package name with a ".changelog" suffix.
+#[derive(Clone, Debug, PartialEq)]
 struct Location {
     uri: String,
-    source: Option<String>,
+    file: String,
+}
+
+impl Location {
+    fn source(&self) -> Option<&str> {
+        self.file.strip_suffix(".changelog")
+    }
+}
+
+/// A changelog to download, for the first of the packages sharing its location.
+#[derive(Debug)]
+struct Job {
+    location: Location,
+    package: String,
+}
+
+/// How the download of a changelog in a round ended.
+#[derive(Debug)]
+enum Download {
+    Done(String),
+    Failed(String),
+    /// Stopped as another download of the round got too large, to try again in the next round.
+    Retry,
 }
 
 fn pending_change(mut change: PackageChange) -> PackageChange {
@@ -68,6 +117,10 @@ fn pending_change(mut change: PackageChange) -> PackageChange {
         _ => change.action,
     };
     change
+}
+
+fn pending_changes(changes: Vec<PackageChange>) -> Vec<PackageChange> {
+    changes.into_iter().map(pending_change).collect()
 }
 
 fn package_spec(change: &PackageChange) -> Result<String, String> {
@@ -97,16 +150,10 @@ fn package_spec(change: &PackageChange) -> Result<String, String> {
     Ok(format!("{package}={version}"))
 }
 
-fn download_changelogs(
-    changes: Vec<PackageChange>,
-    deadline: Instant,
-    resolve: impl FnOnce(&[String]) -> Result<Vec<Location>, String>,
-    fetch: impl Fn(&str) -> Result<String, String> + Sync,
-    mut read_installed: impl FnMut(&str) -> Result<Option<Vec<ChangelogEntry>>, String>,
-) -> Vec<TransactionChangelog> {
-    let changes: Vec<_> = changes.into_iter().map(pending_change).collect();
+/// The packages whose changelog needs a download, as `name[:arch]=version`.
+fn download_packages(changes: &[PackageChange]) -> Vec<String> {
     let mut packages = Vec::new();
-    for change in &changes {
+    for change in changes {
         if change.action != PackageAction::Downgrade
             && change.changelog_range().is_some()
             && let Ok(package) = package_spec(change)
@@ -115,37 +162,20 @@ fn download_changelogs(
             packages.push(package);
         }
     }
-    // APT omits unresolved packages from --print-uris output. Only associate by position if every
-    // package resolved, otherwise fetch separately to avoid showing another source's log.
-    let locations = if packages.is_empty() {
-        Vec::new()
-    } else {
-        resolve(&packages)
-            .ok()
-            .filter(|locations| locations.len() == packages.len())
-            .unwrap_or_else(|| {
-                packages
-                    .iter()
-                    .map(|package| Location {
-                        uri: package.clone(),
-                        source: None,
-                    })
-                    .collect()
-            })
-    };
-    let mut jobs: Vec<(&Location, Vec<&str>)> = Vec::new();
-    for (package, location) in packages.iter().zip(&locations) {
-        match jobs.iter_mut().find(|(other, _)| other.uri == location.uri) {
-            Some((_, packages)) => packages.push(package),
-            None => jobs.push((location, vec![package])),
-        }
-    }
-    let downloaded = download_all(&jobs, deadline, &fetch);
-    let job_of: HashMap<&str, usize> = jobs
-        .iter()
-        .enumerate()
-        .flat_map(|(index, (_, packages))| packages.iter().map(move |package| (*package, index)))
-        .collect();
+    packages
+}
+
+fn download_changelogs(
+    changes: Vec<PackageChange>,
+    deadline: Instant,
+    cache: Option<&Cache>,
+    resolve: impl FnOnce(&[String]) -> Vec<Result<Location, String>>,
+    download: impl FnMut(&[&Job]) -> Vec<Download>,
+    mut read_installed: impl FnMut(&str) -> Result<Option<Vec<ChangelogEntry>>, String>,
+) -> Vec<TransactionChangelog> {
+    let changes = pending_changes(changes);
+    let packages = download_packages(&changes);
+    let fetched = fetch_changelogs(&packages, deadline, cache, resolve, download);
 
     group_changelogs(changes, |change| {
         if change.action == PackageAction::Downgrade {
@@ -153,91 +183,712 @@ fn download_changelogs(
             return Ok(read_installed(&change.package)?.map(Cow::Owned));
         }
         let package = package_spec(change)?;
-        let Some(&index) = job_of.get(package.as_str()) else {
-            return Ok(None);
+        let index = match fetched.job_of.get(&package) {
+            None => return Ok(None),
+            Some(Err(message)) => return Err(ReadError::from(message.clone())),
+            Some(Ok(index)) => *index,
         };
-        match &downloaded[index] {
+        match &fetched.entries[index] {
             Ok(entries) => Ok(Some(Cow::Borrowed(entries.as_slice()))),
             Err(message) => Err(ReadError {
-                source: jobs[index].0.source.clone(),
+                source: fetched.jobs[index].location.source().map(str::to_string),
                 message: message.clone(),
             }),
         }
     })
 }
 
-/// Downloads the changelogs of the jobs, each for the first of its packages, and returns them in
-/// the order of the jobs.
-fn download_all(
-    jobs: &[(&Location, Vec<&str>)],
-    deadline: Instant,
-    fetch: &(impl Fn(&str) -> Result<String, String> + Sync),
-) -> Vec<Entries> {
-    let workers = MAX_DOWNLOADS.min(jobs.len());
-    let mut downloaded: Vec<(usize, Entries)> = thread::scope(|scope| {
-        let handles: Vec<_> = {
-            let _blocked = SignalsBlocked::new();
-            (0..workers)
-                .map(|worker| {
-                    scope.spawn(move || {
-                        (worker..jobs.len())
-                            .step_by(workers)
-                            .map(|index| (index, download(jobs[index].1[0], deadline, fetch)))
-                            .collect::<Vec<_>>()
-                    })
-                })
-                .collect()
-        };
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().unwrap())
-            .collect()
-    });
-    downloaded.sort_by_key(|(index, _)| *index);
-    downloaded.into_iter().map(|(_, entries)| entries).collect()
+/// The changelogs of the jobs, in their order, and for each package its job or why it has none.
+struct Fetched {
+    jobs: Vec<Job>,
+    job_of: HashMap<String, Result<usize, String>>,
+    entries: Vec<Entries>,
 }
 
-fn download(
-    package: &str,
+/// Resolves the changelog locations of the packages and takes the changelogs from the cache, or
+/// downloads them in rounds of limited size in which each file name occurs once, as APT names the
+/// downloads after the source package. Updates the cache to hold exactly the changelogs of these
+/// packages.
+fn fetch_changelogs(
+    packages: &[String],
     deadline: Instant,
-    fetch: &impl Fn(&str) -> Result<String, String>,
-) -> Entries {
-    if Instant::now() >= deadline {
-        return Err(NOT_STARTED.to_string());
+    cache: Option<&Cache>,
+    resolve: impl FnOnce(&[String]) -> Vec<Result<Location, String>>,
+    mut download: impl FnMut(&[&Job]) -> Vec<Download>,
+) -> Fetched {
+    let locations = if packages.is_empty() {
+        Vec::new()
+    } else {
+        resolve(packages)
+    };
+    let mut jobs: Vec<Job> = Vec::new();
+    let mut job_of = HashMap::new();
+    for (package, location) in packages.iter().zip(locations) {
+        let index = location.map(|location| {
+            jobs.iter()
+                .position(|job| job.location.uri == location.uri)
+                .unwrap_or_else(|| {
+                    jobs.push(Job {
+                        location,
+                        package: package.clone(),
+                    });
+                    jobs.len() - 1
+                })
+        });
+        job_of.insert(package.clone(), index);
     }
-    let text = fetch(package)?;
-    if text.len() as u64 > MAX_CHANGELOG_SIZE {
-        return Err("Downloaded changelog is too large".to_string());
+
+    let mut entries: Vec<Option<Entries>> = jobs
+        .iter()
+        .map(|job| {
+            let text = cache?.get(&job.location.uri)?;
+            parse_download(Ok(text)).ok().map(Ok)
+        })
+        .collect();
+    let mut missing: Vec<usize> = (0..jobs.len()).filter(|&i| entries[i].is_none()).collect();
+    // downloads that did not finish in time before go last, so that they do not hold up others on
+    // the same connection, the one that did so most recently at the end
+    if let Some(cache) = cache {
+        missing.sort_by_key(|&index| cache.slow_since(&jobs[index].location.uri));
     }
-    let entries = parse_changelog(&text);
+    while !missing.is_empty() {
+        if Instant::now() >= deadline {
+            for index in missing {
+                entries[index] = Some(Err(NOT_STARTED.to_string()));
+            }
+            break;
+        }
+        let mut files = HashSet::new();
+        let (mut round, mut rest): (Vec<usize>, Vec<usize>) = missing
+            .iter()
+            .partition(|&&index| files.insert(jobs[index].location.file.as_str()));
+        if round.len() > MAX_BATCH {
+            rest.splice(0..0, round.drain(MAX_BATCH..));
+        }
+        let round_jobs: Vec<&Job> = round.iter().map(|&index| &jobs[index]).collect();
+        let mut results = download(&round_jobs).into_iter();
+        let mut retry = Vec::new();
+        for index in round {
+            let result = results
+                .next()
+                .unwrap_or_else(|| Download::Failed("Changelog download failed".to_string()));
+            let parsed = match result {
+                Download::Done(text) => parse_download(Ok(&text)).inspect(|_| {
+                    if let Some(cache) = cache {
+                        cache.put(&jobs[index].location.uri, &text);
+                    }
+                }),
+                Download::Failed(err) => {
+                    if err == TIMED_OUT
+                        && let Some(cache) = cache
+                    {
+                        cache.mark_slow(&jobs[index].location.uri);
+                    }
+                    Err(err)
+                }
+                Download::Retry => {
+                    retry.push(index);
+                    continue;
+                }
+            };
+            entries[index] = Some(parsed);
+        }
+        retry.append(&mut rest);
+        missing = retry;
+    }
+    if let Some(cache) = cache {
+        cache.prune(&jobs.iter().map(|job| job.location.uri.as_str()).collect());
+    }
+    Fetched {
+        jobs,
+        job_of,
+        entries: entries.into_iter().map(Option::unwrap).collect(),
+    }
+}
+
+fn parse_download(text: Result<impl AsRef<str>, String>) -> Entries {
+    let text = text?;
+    if text.as_ref().len() as u64 > MAX_CHANGELOG_SIZE {
+        return Err(TOO_LARGE.to_string());
+    }
+    let entries = parse_changelog(text.as_ref());
     if entries.is_empty() {
         return Err("Downloaded changelog has no entries".to_string());
     }
     Ok(entries)
 }
 
-fn resolve_locations(packages: &[String], deadline: Instant) -> Result<Vec<Location>, String> {
-    let (text, success) = apt_changelog(packages, true, deadline)?;
-    if !success {
-        return Err("could not resolve all changelog locations".to_string());
-    }
-    text.lines()
+/// Resolves the changelog locations of all packages with one APT invocation. APT reports the
+/// packages it cannot resolve separately and leaves them out of the locations, so these get
+/// associated by position only if every failure names its package. Otherwise each package is
+/// resolved on its own, to never show the changelog of another source.
+fn resolve_locations(packages: &[String], deadline: Instant) -> Vec<Result<Location, String>> {
+    let output = match apt_get(&["changelog", "--print-uris", "-qq"], packages, deadline) {
+        Ok(output) if output.status.is_some() => output,
+        Ok(_) => return vec![Err(NOT_STARTED.to_string()); packages.len()],
+        Err(err) => return vec![Err(err); packages.len()],
+    };
+    associate_locations(packages, &output.stdout, &output.stderr).unwrap_or_else(|| {
+        packages
+            .iter()
+            .map(|package| {
+                if Instant::now() >= deadline {
+                    return Err(NOT_STARTED.to_string());
+                }
+                let output = apt_get(
+                    &["changelog", "--print-uris", "-qq"],
+                    std::slice::from_ref(package),
+                    deadline,
+                )?;
+                match (
+                    output.status,
+                    associate_locations(std::slice::from_ref(package), &output.stdout, ""),
+                ) {
+                    (None, _) => Err(TIMED_OUT.to_string()),
+                    (Some(status), Some(mut locations)) if status.success() => locations.remove(0),
+                    _ => Err(NOT_IN_LISTS.to_string()),
+                }
+            })
+            .collect()
+    })
+}
+
+/// Associates the output of `apt-get changelog --print-uris` with the packages, if every package
+/// either has a location or an error naming it.
+fn associate_locations(
+    packages: &[String],
+    output: &str,
+    error: &str,
+) -> Option<Vec<Result<Location, String>>> {
+    let locations: Vec<Location> = output
+        .lines()
         .filter(|line| !line.is_empty())
         .map(parse_location)
-        .collect()
+        .collect::<Result<_, _>>()
+        .ok()?;
+    // APT leaves out the native architecture in its messages, so a name without one matches the
+    // package of any architecture, if only one does
+    let find = |name: &str, version: Option<&str>| {
+        let mut found = packages.iter().enumerate().filter(|(_, package)| {
+            let (spec, spec_version) = package.split_once('=').unwrap_or((package, ""));
+            let base = spec.split_once(':').map_or(spec, |(base, _)| base);
+            (spec == name || base == name) && version.is_none_or(|version| version == spec_version)
+        });
+        let (index, _) = found.next()?;
+        found.next().is_none().then_some(index)
+    };
+    let mut failed = HashSet::new();
+    for line in error.lines() {
+        let Some(message) = line.strip_prefix("E: ") else {
+            continue;
+        };
+        let package = if let Some(name) = message.strip_prefix("Unable to locate package ") {
+            find(name, None)
+        } else {
+            let (version, name) = message
+                .strip_prefix("Version '")?
+                .strip_suffix("' was not found")?
+                .split_once("' for '")?;
+            find(name, Some(version))
+        };
+        failed.insert(package?);
+    }
+    if locations.len() + failed.len() != packages.len() {
+        return None;
+    }
+    let mut locations = locations.into_iter();
+    Some(
+        (0..packages.len())
+            .map(|index| match failed.contains(&index) {
+                true => Err(NOT_IN_LISTS.to_string()),
+                false => Ok(locations.next().unwrap()),
+            })
+            .collect(),
+    )
 }
 
 /// Parses a line of `apt-get changelog --print-uris`, the quoted URI and the name of the file to
-/// download to, the source package name with a ".changelog" suffix.
+/// download to.
 fn parse_location(line: &str) -> Result<Location, String> {
     let (uri, file) = line
         .strip_prefix('\'')
         .and_then(|line| line.split_once("' "))
+        .filter(|(_, file)| {
+            file.ends_with(".changelog") && !file.starts_with('.') && !file.contains('/')
+        })
         .ok_or_else(|| "invalid changelog location from APT".to_string())?;
     Ok(Location {
         uri: uri.to_string(),
-        source: file.strip_suffix(".changelog").map(str::to_string),
+        file: file.to_string(),
     })
+}
+
+/// Downloads the changelogs of the jobs, whose file names must differ, with one APT run into a
+/// private directory, and returns them in the order of the jobs. Stops the run if a changelog or
+/// all together get too large, and leaves the downloads of the run that did not cause it to retry.
+fn apt_download(jobs: &[&Job], deadline: Instant) -> Vec<Download> {
+    let failed = |message: String| {
+        jobs.iter()
+            .map(|_| Download::Failed(message.clone()))
+            .collect()
+    };
+    let work = match WorkDir::new() {
+        Ok(work) => work,
+        Err(err) => return failed(format!("Could not create a download directory - {err}")),
+    };
+    let packages: Vec<String> = jobs.iter().map(|job| job.package.clone()).collect();
+    let mut culprit = None;
+    let output = match apt_get_in(
+        &["changelog", "--download-only", "-q"],
+        &packages,
+        deadline,
+        Some(&work),
+        || {
+            let (total, largest) = download_size(&work.path);
+            let too_large = total > MAX_ROUND_SIZE
+                || largest
+                    .as_ref()
+                    .is_some_and(|(size, _)| *size > MAX_CHANGELOG_SIZE);
+            if too_large {
+                culprit = largest.map(|(_, name)| name);
+            }
+            too_large
+        },
+    ) {
+        Ok(output) => output,
+        Err(err) => return failed(err),
+    };
+    let report = DownloadReport::parse(&output.stdout, &output.stderr);
+    let culprit_job = culprit.filter(|name| jobs.iter().any(|job| job.location.file == *name));
+    jobs.iter()
+        .map(
+            |job| match read_download(&work.path.join(&job.location.file)) {
+                Ok(Some(text)) => Download::Done(text),
+                Ok(None) if output.stopped => match &culprit_job {
+                    Some(name) if *name == job.location.file => {
+                        Download::Failed(TOO_LARGE.to_string())
+                    }
+                    Some(_) => Download::Retry,
+                    None => Download::Failed(
+                        "Changelog downloads stopped as they got too large".to_string(),
+                    ),
+                },
+                Ok(None) => Download::Failed(report.failure(&job.location, output.status)),
+                Err(err) => Download::Failed(err),
+            },
+        )
+        .collect()
+}
+
+/// The total size of the regular files below the directory, and the largest of them by name,
+/// without following symbolic links, to watch the downloads of APT, which keeps unfinished ones in
+/// directories within its temporary directory.
+fn download_size(dir: &Path) -> (u64, Option<(u64, String)>) {
+    fn walk(dir: &Path, depth: u32, total: &mut u64, largest: &mut Option<(u64, String)>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() && depth > 0 {
+                walk(&entry.path(), depth - 1, total, largest);
+            } else if meta.is_file() {
+                *total += meta.len();
+                if largest.as_ref().is_none_or(|(size, _)| meta.len() > *size) {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    *largest = Some((meta.len(), name));
+                }
+            }
+        }
+    }
+    let mut total = 0;
+    let mut largest = None;
+    walk(dir, 2, &mut total, &mut largest);
+    (total, largest)
+}
+
+/// Reads a downloaded changelog, `None` if it is missing. Does not follow symbolic links, as APT
+/// moves the files there from a directory of its sandbox user.
+fn read_download(path: &Path) -> Result<Option<String>, String> {
+    let failed = |err| format!("Could not read the downloaded changelog - {err}");
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(failed(err)),
+    };
+    let meta = file.metadata().map_err(failed)?;
+    if !meta.is_file() {
+        return Err("Downloaded changelog is not a regular file".to_string());
+    }
+    if meta.len() > MAX_CHANGELOG_SIZE {
+        return Err(TOO_LARGE.to_string());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CHANGELOG_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(failed)?;
+    if bytes.len() as u64 > MAX_CHANGELOG_SIZE {
+        return Err(TOO_LARGE.to_string());
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// A private directory below /tmp, removed when dropped. APT downloads into its temporary
+/// directory and moves the files into the working directory, which needs both on the same file
+/// system, so the temporary directory of APT is placed inside, writable for its sandbox user.
+struct WorkDir {
+    path: PathBuf,
+}
+
+impl WorkDir {
+    fn new() -> io::Result<Self> {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = PathBuf::from(format!(
+            "/tmp/proxmox-apt-history-{}-{nanos}-{}",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::DirBuilder::new().mode(0o711).create(&path)?;
+        let work = Self { path };
+        let tmp = work.tmp();
+        fs::DirBuilder::new().mode(0o700).create(&tmp)?;
+        if let Some(uid) = apt_sandbox_uid() {
+            // without it APT falls back to /tmp, which works as well, but leaves its directories
+            // behind if the download gets stopped
+            let _ = std::os::unix::fs::chown(&tmp, Some(uid), None);
+        }
+        Ok(work)
+    }
+
+    fn tmp(&self) -> PathBuf {
+        self.path.join("tmp")
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn apt_sandbox_uid() -> Option<libc::uid_t> {
+    let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    let mut buffer = vec![0 as libc::c_char; 4096];
+    // SAFETY: the buffers are valid for the given sizes and `getpwnam_r` only writes the entry,
+    // pointing into `buffer`, which is only used while it lives.
+    unsafe {
+        let rc = libc::getpwnam_r(
+            c"_apt".as_ptr(),
+            entry.as_mut_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        );
+        (rc == 0 && !result.is_null()).then(|| (*result).pw_uid)
+    }
+}
+
+/// What APT reported about the changelogs of one download run: the source packages whose download
+/// started, the repositories that answered, and the reasons of failures by source and by URI.
+#[derive(Default)]
+struct DownloadReport {
+    started: HashSet<String>,
+    answered: HashSet<String>,
+    by_source: HashMap<String, String>,
+    by_uri: HashMap<String, String>,
+}
+
+impl DownloadReport {
+    /// Parses the status lines of APT, like `Get:1 https://host bash 5.2.37-2 Changelog [116 kB]`
+    /// or `Err:2 https://host curl 8.14.1-2 Changelog` followed by the indented reason, and its
+    /// errors, like `E: Failed to fetch https://host/curl_changelog  404  Not Found`.
+    fn parse(output: &str, error: &str) -> Self {
+        let mut report = Self::default();
+        let mut lines = output.lines().peekable();
+        while let Some(line) = lines.next() {
+            let mut fields = line.split_whitespace();
+            let (Some(status), Some(repository), Some(source)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            let Some((kind, _)) = status.split_once(':') else {
+                continue;
+            };
+            if !matches!(kind, "Get" | "Ign" | "Err") {
+                continue;
+            }
+            report.started.insert(source.to_string());
+            // failures and retries can also come from connections that did not succeed
+            if kind == "Get" {
+                report.answered.insert(format!("{repository}/"));
+            }
+            if kind == "Err"
+                && let Some(reason) = lines.next_if(|line| line.starts_with("  "))
+            {
+                report
+                    .by_source
+                    .insert(source.to_string(), reason.trim().to_string());
+            }
+        }
+        for line in error.lines() {
+            if let Some((uri, reason)) = line
+                .strip_prefix("E: Failed to fetch ")
+                .and_then(|line| line.split_once(char::is_whitespace))
+            {
+                report
+                    .by_uri
+                    .insert(uri.to_string(), reason.trim().to_string());
+            }
+        }
+        report
+    }
+
+    /// Why the changelog at the location is missing after the run, which got stopped at the
+    /// deadline if it has no exit status. A download that did not start counts as timed out if its
+    /// repository did not answer at all, as APT then still waits for the connection.
+    fn failure(&self, location: &Location, status: Option<ExitStatus>) -> String {
+        let answered = self
+            .answered
+            .iter()
+            .any(|repository| location.uri.starts_with(repository.as_str()));
+        let source = location.source().unwrap_or_default();
+        match self
+            .by_uri
+            .get(&location.uri)
+            .or_else(|| self.by_source.get(source))
+        {
+            Some(reason) => describe_failure(reason),
+            None if status.is_none() && (self.started.contains(source) || !answered) => {
+                TIMED_OUT.to_string()
+            }
+            None if status.is_none() => NOT_STARTED.to_string(),
+            None => "Changelog download failed".to_string(),
+        }
+    }
+}
+
+/// Turns the reason APT gives for a failed changelog download into a short message for admins,
+/// without the address details. APT wraps the reasons of changelog downloads in parentheses after
+/// the version, like `Changelog unavailable for bash=5.2 (404  Not Found [IP: 192.0.2.1 443])`,
+/// also for other failures than a missing changelog.
+fn describe_failure(reason: &str) -> String {
+    let (wrapped, reason) = match reason.strip_prefix("Changelog unavailable for ") {
+        Some(rest) => (
+            true,
+            rest.split_once('(')
+                .map_or("", |(_, reason)| reason.strip_suffix(')').unwrap_or(reason)),
+        ),
+        None => (false, reason),
+    };
+    let status = reason
+        .split_whitespace()
+        .next()
+        .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()));
+    let lower = reason.to_ascii_lowercase();
+    match status {
+        Some("404") => format!("{NOT_AVAILABLE} (HTTP 404)"),
+        Some(code) => format!("Changelog download failed (HTTP {code})"),
+        None if wrapped && reason.trim().is_empty() => NOT_AVAILABLE.to_string(),
+        _ if lower.contains("timed out") => TIMED_OUT.to_string(),
+        _ if lower.contains("resolving") => {
+            "Changelog download failed - could not resolve the repository host".to_string()
+        }
+        _ if lower.contains("certificate verification failed") => {
+            "Changelog download failed - the repository certificate is not trusted".to_string()
+        }
+        _ => "Changelog download failed".to_string(),
+    }
+}
+
+/// Downloaded changelogs by URI, compressed and with the URI in the first line, so that a hash
+/// collision cannot return another changelog.
+struct Cache {
+    dir: OwnedFd,
+}
+
+impl Cache {
+    /// Opens the cache directory, creating it if missing. Only accepts a directory that belongs to
+    /// the current user and that nobody else can access, and works relative to it from then on, so
+    /// that whoever can modify its parent cannot redirect the cache.
+    fn open(dir: &Path) -> Option<Self> {
+        if let Some(parent) = dir.parent() {
+            fs::create_dir_all(parent).ok()?;
+        }
+        match fs::DirBuilder::new().mode(0o700).create(dir) {
+            Err(err) if err.kind() != io::ErrorKind::AlreadyExists => return None,
+            _ => (),
+        }
+        let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: the path is a valid C string, and the returned descriptor gets owned right away.
+        let dir = match unsafe { libc::open(path.as_ptr(), flags) } {
+            fd if fd < 0 => return None,
+            // SAFETY: the descriptor is valid and not owned by anything else.
+            fd => unsafe { OwnedFd::from_raw_fd(fd) },
+        };
+        let dir = fs::File::from(dir);
+        let meta = dir.metadata().ok()?;
+        // SAFETY: geteuid cannot fail.
+        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
+            return None;
+        }
+        Some(Self { dir: dir.into() })
+    }
+
+    fn key(uri: &str) -> String {
+        // FNV-1a, stable across releases unlike the hasher of std
+        let hash = uri.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        });
+        format!("{hash:016x}")
+    }
+
+    fn name(uri: &str) -> String {
+        format!("{}.gz", Self::key(uri))
+    }
+
+    fn marker(uri: &str) -> String {
+        format!("{}.slow", Self::key(uri))
+    }
+
+    /// Opens a file in the cache directory, without following symbolic links.
+    fn open_file(&self, name: &str, flags: libc::c_int) -> io::Result<fs::File> {
+        let name = CString::new(name).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let flags = flags | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: the directory descriptor and the name are valid, the mode is only used when
+        // creating a file, and the returned descriptor gets owned right away.
+        match unsafe { libc::openat(self.dir.as_raw_fd(), name.as_ptr(), flags, 0o600) } {
+            fd if fd < 0 => Err(io::Error::last_os_error()),
+            // SAFETY: the descriptor is valid and not owned by anything else.
+            fd => Ok(unsafe { fs::File::from_raw_fd(fd) }),
+        }
+    }
+
+    fn rename(&self, from: &str, to: &str) -> io::Result<()> {
+        let from = CString::new(from).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let to = CString::new(to).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let dir = self.dir.as_raw_fd();
+        // SAFETY: the directory descriptor and the names are valid.
+        match unsafe { libc::renameat(dir, from.as_ptr(), dir, to.as_ptr()) } {
+            0 => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
+    fn remove(&self, name: &str) {
+        if let Ok(name) = CString::new(name) {
+            // SAFETY: the directory descriptor and the name are valid.
+            unsafe { libc::unlinkat(self.dir.as_raw_fd(), name.as_ptr(), 0) };
+        }
+    }
+
+    fn get(&self, uri: &str) -> Option<String> {
+        let file = self.open_file(&Self::name(uri), libc::O_RDONLY).ok()?;
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
+        let limit = MAX_CHANGELOG_SIZE + uri.len() as u64 + 1;
+        let mut bytes = Vec::new();
+        GzDecoder::new(file)
+            .take(limit + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > limit {
+            return None;
+        }
+        let text = String::from_utf8(bytes).ok()?;
+        let (stored, text) = text.split_once('\n')?;
+        (stored == uri).then(|| text.to_string())
+    }
+
+    /// Stores the changelog, best effort, as the next request downloads it again otherwise. Without
+    /// syncing, as a damaged entry fails to decompress and gets downloaded again as well.
+    fn put(&self, uri: &str, text: &str) {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        let name = Self::name(uri);
+        let tmp = format!(
+            ".{name}.{}.{}.tmp",
+            std::process::id(),
+            COUNT.fetch_add(1, Ordering::Relaxed),
+        );
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
+        let stored = self
+            .open_file(&tmp, flags)
+            .and_then(|file| {
+                let mut encoder = GzEncoder::new(file, Compression::default());
+                encoder.write_all(uri.as_bytes())?;
+                encoder.write_all(b"\n")?;
+                encoder.write_all(text.as_bytes())?;
+                encoder.finish().map(drop)
+            })
+            .and_then(|()| self.rename(&tmp, &name));
+        if stored.is_ok() {
+            self.remove(&Self::marker(uri));
+        } else {
+            self.remove(&tmp);
+        }
+    }
+
+    /// Remembers when the download of the changelog did not finish in time, so that the next
+    /// request starts it after the others, and slow downloads take turns being the first of them.
+    fn mark_slow(&self, uri: &str) {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC;
+        if let Ok(mut file) = self.open_file(&Self::marker(uri), flags) {
+            let _ = writeln!(file, "{now}");
+        }
+    }
+
+    /// When the download of the changelog last did not finish in time, if it did not yet finish
+    /// since.
+    fn slow_since(&self, uri: &str) -> Option<u128> {
+        let mut text = String::new();
+        let file = self.open_file(&Self::marker(uri), libc::O_RDONLY).ok()?;
+        file.take(64).read_to_string(&mut text).ok()?;
+        Some(text.trim().parse().unwrap_or_default())
+    }
+
+    /// Removes the changelogs and markers of other URIs, and files of interrupted writes.
+    fn prune(&self, keep: &HashSet<&str>) {
+        let keep: HashSet<String> = keep.iter().map(|uri| Self::key(uri)).collect();
+        // reopens the directory the descriptor refers to, wherever it is now
+        let Ok(entries) = fs::read_dir(format!("/proc/self/fd/{}", self.dir.as_raw_fd())) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let stale = if name.ends_with(".tmp") {
+                self.open_file(name, libc::O_RDONLY)
+                    .and_then(|file| file.metadata()?.modified())
+                    .is_ok_and(|modified| modified.elapsed().unwrap_or_default() > TIMEOUT * 4)
+            } else {
+                name.strip_suffix(".gz")
+                    .or_else(|| name.strip_suffix(".slow"))
+                    .is_some_and(|key| !keep.contains(key))
+            };
+            if stale {
+                self.remove(name);
+            }
+        }
+    }
 }
 
 /// Blocks all signals of the calling thread until dropped. Threads spawned meanwhile inherit the
@@ -280,77 +931,43 @@ fn read_output(reader: impl Read, limit: u64) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Turns the error output of `apt-get changelog` into a short message for admins, without the URL
-/// and address details. APT reports the HTTP status after the URL, or for a missing changelog in
-/// parentheses after the version.
-fn download_error(error: &str, exit_code: Option<i32>) -> String {
-    let detail = error
-        .lines()
-        .find_map(|line| line.strip_prefix("E: Failed to fetch "))
-        .and_then(|line| line.split_once(char::is_whitespace))
-        .map(|(_, detail)| detail.trim());
-    let Some(detail) = detail else {
-        return match exit_code {
-            Some(code) => format!("Changelog download failed (APT exit code {code})"),
-            None => "Changelog download interrupted".to_string(),
-        };
-    };
-    // APT wraps the reasons of changelog downloads in parentheses after the version, also for
-    // other failures than a missing changelog
-    let (wrapped, detail) = match detail.strip_prefix("Changelog unavailable for ") {
-        Some(rest) => (
-            true,
-            rest.split_once('(')
-                .map_or("", |(_, detail)| detail.strip_suffix(')').unwrap_or(detail)),
-        ),
-        None => (false, detail),
-    };
-    let status = detail
-        .split_whitespace()
-        .next()
-        .filter(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()));
-    let lower = detail.to_ascii_lowercase();
-    match status {
-        Some("404") => "Changelog not available from the repository (HTTP 404)".to_string(),
-        Some(code) => format!("Changelog download failed (HTTP {code})"),
-        None if wrapped && detail.trim().is_empty() => {
-            "Changelog not available from the repository".to_string()
-        }
-        _ if lower.contains("timed out") => TIMED_OUT.to_string(),
-        _ if lower.contains("resolving") => {
-            "Changelog download failed - could not resolve the repository host".to_string()
-        }
-        _ if lower.contains("certificate verification failed") => {
-            "Changelog download failed - the repository certificate is not trusted".to_string()
-        }
-        _ => "Changelog download failed".to_string(),
-    }
+/// The output of a command, without exit status if it got stopped, at the deadline or because
+/// `stopped` is set.
+struct Output {
+    status: Option<ExitStatus>,
+    stopped: bool,
+    stdout: String,
+    stderr: String,
 }
 
-fn apt_changelog(
+fn apt_get(args: &[&str], packages: &[String], deadline: Instant) -> Result<Output, String> {
+    apt_get_in(args, packages, deadline, None, || false)
+}
+
+fn apt_get_in(
+    args: &[&str],
     packages: &[String],
-    print_uris: bool,
     deadline: Instant,
-) -> Result<(String, bool), String> {
+    work: Option<&WorkDir>,
+    stop: impl FnMut() -> bool,
+) -> Result<Output, String> {
     let mut command = Command::new("apt-get");
-    command.args(["changelog", "-qq"]);
-    if print_uris {
-        command.arg("--print-uris");
+    command.args(args).arg("--").args(packages);
+    command.env("LC_ALL", "C");
+    if let Some(work) = work {
+        command.current_dir(&work.path).env("TMPDIR", work.tmp());
     }
-    command.args(["--"]).args(packages);
-    command
-        .env("LC_ALL", "C")
-        .env("APT_LISTCHANGES_FRONTEND", "none");
-    let (status, output, error) = run(command, deadline)?;
-    if !status.success() && !print_uris {
-        return Err(download_error(&error, status.code()));
-    }
-    Ok((output, status.success()))
+    run(command, deadline, stop)
 }
 
-/// Runs the command in its own process group until it exits or the deadline passes, then kills
-/// what is left of the group, and returns the exit status, the output and the error output.
-fn run(mut command: Command, deadline: Instant) -> Result<(ExitStatus, String, String), String> {
+/// Runs the command in its own process group until it exits, the deadline passes or `stop`, which
+/// gets checked a few times per second, returns true, then kills what is left of the group, and
+/// returns the exit status, the output and the error output.
+fn run(
+    mut command: Command,
+    deadline: Instant,
+    mut stop: impl FnMut() -> bool,
+) -> Result<Output, String> {
     let mut child = command
         .process_group(0)
         .stdin(Stdio::null())
@@ -366,12 +983,21 @@ fn run(mut command: Command, deadline: Instant) -> Result<(ExitStatus, String, S
             let _blocked = SignalsBlocked::new();
             (
                 scope.spawn(|| read_output(stdout, MAX_CHANGELOG_SIZE)),
-                scope.spawn(|| read_output(stderr, 64 * 1024)),
+                scope.spawn(|| read_output(stderr, 1024 * 1024)),
             )
         };
+        let mut polls = 0_u32;
+        let mut stopped = false;
         let exited = loop {
             match has_exited(pid) {
-                Ok(false) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+                Ok(false) if Instant::now() < deadline => {
+                    polls += 1;
+                    if polls.is_multiple_of(10) && stop() {
+                        stopped = true;
+                        break Ok(false);
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
                 result => break result,
             }
         };
@@ -382,16 +1008,21 @@ fn run(mut command: Command, deadline: Instant) -> Result<(ExitStatus, String, S
             unsafe { libc::kill(-pid, libc::SIGKILL) };
         }
         let status = child.wait();
-        let output = stdout.join().unwrap();
-        let error = stderr.join().unwrap();
-        match exited {
-            Ok(true) => (),
-            Ok(false) => return Err(TIMED_OUT.to_string()),
+        let stdout = stdout.join().unwrap();
+        let stderr = stderr.join().unwrap();
+        let status = match exited {
+            Ok(true) => Some(
+                status.map_err(|err| format!("Could not wait for apt-get changelog - {err}"))?,
+            ),
+            Ok(false) => None,
             Err(err) => return Err(format!("Could not wait for apt-get changelog - {err}")),
-        }
-        let status =
-            status.map_err(|err| format!("Could not wait for apt-get changelog - {err}"))?;
-        Ok((status, output?, error?))
+        };
+        Ok(Output {
+            status,
+            stopped,
+            stdout: stdout?,
+            stderr: stderr?,
+        })
     })
 }
 
@@ -439,14 +1070,15 @@ mod tests {
             .collect()
     }
 
-    fn locations(sources: &[&str]) -> Vec<Location> {
-        sources
-            .iter()
-            .map(|source| Location {
-                uri: format!("https://example.invalid/{source}"),
-                source: Some(source.to_string()),
-            })
-            .collect()
+    fn location(source: &str) -> Location {
+        Location {
+            uri: format!("https://example.invalid/{source}"),
+            file: format!("{source}.changelog"),
+        }
+    }
+
+    fn locations(sources: &[&str]) -> Vec<Result<Location, String>> {
+        sources.iter().map(|source| Ok(location(source))).collect()
     }
 
     fn later() -> Instant {
@@ -455,6 +1087,45 @@ mod tests {
 
     fn no_installed(_: &str) -> Result<Option<Vec<ChangelogEntry>>, String> {
         panic!("only downgrades read the installed changelog")
+    }
+
+    impl From<Result<String, String>> for Download {
+        fn from(result: Result<String, String>) -> Self {
+            match result {
+                Ok(text) => Download::Done(text),
+                Err(err) => Download::Failed(err),
+            }
+        }
+    }
+
+    fn outcomes(results: Vec<Result<String, String>>) -> Vec<Download> {
+        results.into_iter().map(Download::from).collect()
+    }
+
+    /// Downloads the text of the source each job names, as packages sharing a source share it.
+    fn download_sources(jobs: &[&Job]) -> Vec<Download> {
+        jobs.iter()
+            .map(|job| Download::Done(text(job.location.source().unwrap())))
+            .collect()
+    }
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "proxmox-apt-history-test-{name}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -470,21 +1141,30 @@ mod tests {
                 change("broken", Some("1")),
             ],
             later(),
+            None,
             |packages| {
                 assert_eq!(packages.len(), 6);
-                Ok(locations(&["zulu", "foo", "foo", "foo", "alpha", "broken"]))
+                locations(&["zulu", "foo", "foo", "foo", "alpha", "broken"])
             },
-            |package| {
-                fetched.lock().unwrap().push(package.to_string());
-                match package {
-                    "broken=3" => Err("download failed".to_string()),
-                    "foo-bin=3" => Ok(text("foo")),
-                    _ => Ok(text(package.split_once('=').unwrap().0)),
-                }
+            |jobs| {
+                fetched
+                    .lock()
+                    .unwrap()
+                    .extend(jobs.iter().map(|job| job.package.clone()));
+                jobs.iter()
+                    .map(|job| match job.package.as_str() {
+                        "broken=3" => Err("download failed".to_string()),
+                        _ => Ok(text(job.location.source().unwrap())),
+                    })
+                    .map(Download::from)
+                    .collect()
             },
             no_installed,
         );
-        assert_eq!(fetched.lock().unwrap().len(), 4);
+        assert_eq!(
+            *fetched.lock().unwrap(),
+            ["zulu=3", "foo-bin=3", "alpha=3", "broken=3"]
+        );
         assert_eq!(
             groups
                 .iter()
@@ -521,8 +1201,14 @@ mod tests {
                 change("other", Some("1")),
             ],
             later(),
-            |_| Ok(locations(&["bar", "bar", "other"])),
-            |_| Err("Changelog download failed".to_string()),
+            None,
+            |_| locations(&["bar", "bar", "other"]),
+            |jobs| {
+                outcomes(vec![
+                    Err("Changelog download failed".to_string());
+                    jobs.len()
+                ])
+            },
             no_installed,
         );
         assert_eq!(groups.len(), 2);
@@ -538,6 +1224,7 @@ mod tests {
         let groups = download_changelogs(
             vec![pinned],
             later(),
+            None,
             |_| panic!("downgrades need no download"),
             |_| panic!("downgrades need no download"),
             |package| {
@@ -572,34 +1259,40 @@ mod tests {
     }
 
     #[test]
-    fn bound_parallel_downloads() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let active = AtomicUsize::new(0);
-        let peak = AtomicUsize::new(0);
+    fn same_file_names_download_in_separate_rounds() {
+        let mut second = change("binary", Some("1"));
+        second.arch = Some("arm64".to_string());
+        second.new_version = Some("2".to_string());
+        let rounds = Mutex::new(Vec::new());
         let groups = download_changelogs(
-            (0..18).map(|i| change(&format!("pkg{i}"), None)).collect(),
+            vec![
+                change("binary", Some("1")),
+                second,
+                change("other", Some("1")),
+            ],
             later(),
+            None,
             |packages| {
-                Ok(packages
-                    .iter()
-                    .map(|package| Location {
-                        uri: package.clone(),
-                        source: None,
-                    })
-                    .collect())
+                assert_eq!(packages, ["binary=3", "binary:arm64=2", "other=3"]);
+                let mut arm = location("source");
+                arm.uri.push_str("-arm64");
+                vec![Ok(location("source")), Ok(arm), Ok(location("other"))]
             },
-            |_| {
-                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
-                peak.fetch_max(count, Ordering::SeqCst);
-                thread::sleep(Duration::from_millis(10));
-                active.fetch_sub(1, Ordering::SeqCst);
-                Ok(text("source"))
+            |jobs| {
+                rounds.lock().unwrap().push(
+                    jobs.iter()
+                        .map(|job| job.package.clone())
+                        .collect::<Vec<_>>(),
+                );
+                download_sources(jobs)
             },
             no_installed,
         );
-        assert_eq!(groups[0].packages.len(), 18);
-        assert!((2..=MAX_DOWNLOADS).contains(&peak.load(Ordering::SeqCst)));
+        assert_eq!(
+            *rounds.lock().unwrap(),
+            [vec!["binary=3", "other=3"], vec!["binary:arm64=2"]]
+        );
+        assert_eq!(groups.len(), 3);
     }
 
     #[test]
@@ -607,7 +1300,8 @@ mod tests {
         let groups = download_changelogs(
             vec![change("late", Some("1"))],
             Instant::now(),
-            |_| Ok(locations(&["late"])),
+            None,
+            |_| locations(&["late"]),
             |_| panic!("no download may start after the deadline"),
             no_installed,
         );
@@ -623,11 +1317,9 @@ mod tests {
         let groups = download_changelogs(
             vec![change("binary", Some("1")), second],
             later(),
-            |packages| {
-                assert_eq!(packages, ["binary=3", "binary:arm64=2"]);
-                Ok(locations(&["source", "source-arm64"]))
-            },
-            |_| Ok(text("source")),
+            None,
+            |_| locations(&["source", "source-arm64"]),
+            |jobs| outcomes(vec![Ok(text("source")); jobs.len()]),
             no_installed,
         );
         assert_eq!(groups.len(), 2);
@@ -636,21 +1328,61 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_resolution_does_not_misassociate_changelogs() {
-        for resolution in [Err("unavailable".to_string()), Ok(locations(&["uri"]))] {
-            let groups = download_changelogs(
-                vec![change("missing", None), change("valid", Some("1"))],
-                later(),
-                |_| resolution,
-                |package| match package {
-                    "valid=3" => Ok(text("valid")),
-                    _ => Err("not available".to_string()),
-                },
-                no_installed,
-            );
-            assert_eq!(groups[0].source.as_deref(), Some("valid"));
-            assert_eq!(groups[1].error.as_deref(), Some("not available"));
-        }
+    fn unresolved_packages_keep_their_own_error() {
+        let groups = download_changelogs(
+            vec![change("missing", None), change("valid", Some("1"))],
+            later(),
+            None,
+            |_| vec![Err(NOT_IN_LISTS.to_string()), Ok(location("valid"))],
+            download_sources,
+            no_installed,
+        );
+        assert_eq!(groups[0].source.as_deref(), Some("valid"));
+        assert_eq!(groups[1].error.as_deref(), Some(NOT_IN_LISTS));
+        assert_eq!(groups[1].source, None);
+    }
+
+    #[test]
+    fn associate_locations_only_if_every_failure_names_its_package() {
+        let packages: Vec<String> = [
+            "bash=1",
+            "gone=2",
+            "coreutils=3",
+            "curl:amd64=4",
+            "libc6:amd64=5",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let output = "'https://example.invalid/bash_1' bash.changelog\n\
+            'https://example.invalid/coreutils_3' coreutils.changelog\n";
+        // APT leaves out the native architecture of libc6
+        let associated = associate_locations(
+            &packages,
+            output,
+            "E: Version '2' for 'gone' was not found\nE: Unable to locate package curl:amd64\n\
+             E: Version '5' for 'libc6' was not found\n",
+        )
+        .unwrap();
+        assert_eq!(associated[0].as_ref().unwrap().file, "bash.changelog");
+        assert_eq!(associated[1].as_ref().unwrap_err(), NOT_IN_LISTS);
+        assert_eq!(associated[2].as_ref().unwrap().file, "coreutils.changelog");
+        assert!(associated[3].is_err());
+        assert!(associated[4].is_err());
+
+        // without the architecture, a message naming two packages is ambiguous
+        let multiarch: Vec<String> = ["libc6:amd64=5", "libc6:i386=5"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        assert!(
+            associate_locations(&multiarch, "", "E: Version '5' for 'libc6' was not found\n")
+                .is_none()
+        );
+
+        // an error that names no package leaves the association open
+        assert!(associate_locations(&packages, output, "E: Something else\n").is_none());
+        assert!(associate_locations(&packages, output, "").is_none());
     }
 
     #[test]
@@ -662,17 +1394,23 @@ mod tests {
                 change("large", None),
             ],
             later(),
+            None,
             |packages| {
-                Ok(locations(
-                    &packages.iter().map(String::as_str).collect::<Vec<_>>(),
-                ))
+                packages
+                    .iter()
+                    .map(|package| Ok(location(package.split_once('=').unwrap().0)))
+                    .collect()
             },
-            |package| {
-                Ok(if package == "large=3" {
-                    "x".repeat(MAX_CHANGELOG_SIZE as usize + 1)
-                } else {
-                    String::new()
-                })
+            |jobs| {
+                jobs.iter()
+                    .map(|job| {
+                        Download::Done(if job.package == "large=3" {
+                            "x".repeat(MAX_CHANGELOG_SIZE as usize + 1)
+                        } else {
+                            String::new()
+                        })
+                    })
+                    .collect()
             },
             no_installed,
         );
@@ -688,8 +1426,228 @@ mod tests {
         )
         .unwrap();
         assert!(location.uri.ends_with("apt_3.0.4_changelog"));
-        assert_eq!(location.source.as_deref(), Some("apt"));
+        assert_eq!(location.source(), Some("apt"));
         assert!(parse_location("https://example.invalid/changelog").is_err());
+        assert!(parse_location("'https://example.invalid/changelog' ../x.changelog").is_err());
+        assert!(parse_location("'https://example.invalid/changelog' .changelog").is_err());
+    }
+
+    #[test]
+    fn cache_answers_later_requests() {
+        let dir = TestDir::new("cache");
+        let cache = Cache::open(&dir.0).unwrap();
+        let downloads = Mutex::new(0);
+        let request = |sources: &[&str]| {
+            fetch_changelogs(
+                &sources
+                    .iter()
+                    .map(|source| format!("{source}=3"))
+                    .collect::<Vec<_>>(),
+                later(),
+                Some(&cache),
+                |_| locations(sources),
+                |jobs| {
+                    *downloads.lock().unwrap() += jobs.len();
+                    download_sources(jobs)
+                },
+            )
+        };
+        request(&["foo", "bar"]);
+        assert_eq!(*downloads.lock().unwrap(), 2);
+        let second = request(&["foo", "bar"]);
+        assert_eq!(*downloads.lock().unwrap(), 2);
+        assert_eq!(second.entries[0].as_ref().unwrap().len(), 3);
+
+        // only the changelogs of the latest request stay
+        request(&["foo"]);
+        assert!(cache.get(&location("foo").uri).is_some());
+        assert!(cache.get(&location("bar").uri).is_none());
+
+        // an entry of another URI with the same name is not taken
+        fs::rename(
+            dir.0.join(Cache::name(&location("foo").uri)),
+            dir.0.join(Cache::name(&location("other").uri)),
+        )
+        .unwrap();
+        assert!(cache.get(&location("other").uri).is_none());
+    }
+
+    #[test]
+    fn failed_downloads_are_not_cached() {
+        let dir = TestDir::new("failed");
+        let cache = Cache::open(&dir.0).unwrap();
+        for expected in [1, 1] {
+            let fetched = fetch_changelogs(
+                &["foo=3".to_string()],
+                later(),
+                Some(&cache),
+                |_| locations(&["foo"]),
+                |jobs| {
+                    outcomes(vec![
+                        Err("Changelog download failed".to_string());
+                        jobs.len()
+                    ])
+                },
+            );
+            assert_eq!(fetched.entries.len(), expected);
+            assert!(fetched.entries[0].is_err());
+        }
+    }
+
+    #[test]
+    fn slow_downloads_go_last_next_time() {
+        let dir = TestDir::new("slow");
+        let cache = Cache::open(&dir.0).unwrap();
+        let rounds = Mutex::new(Vec::new());
+        let request = |slow: bool| {
+            fetch_changelogs(
+                &["big=3", "small=3"].map(str::to_string),
+                later(),
+                Some(&cache),
+                |_| locations(&["big", "small"]),
+                |jobs| {
+                    rounds.lock().unwrap().push(
+                        jobs.iter()
+                            .map(|job| job.package.clone())
+                            .collect::<Vec<_>>(),
+                    );
+                    jobs.iter()
+                        .map(|job| match job.package.as_str() {
+                            "big=3" if slow => Download::Failed(TIMED_OUT.to_string()),
+                            "big=3" => Download::Done(text("big")),
+                            _ => Download::Failed("Changelog download failed".to_string()),
+                        })
+                        .collect()
+                },
+            )
+        };
+        request(true);
+        assert!(cache.slow_since(&location("big").uri).is_some());
+        request(false);
+        assert_eq!(
+            *rounds.lock().unwrap(),
+            [vec!["big=3", "small=3"], vec!["small=3", "big=3"]]
+        );
+        // a finished download is no longer slow, and markers of other URIs get pruned
+        assert!(cache.slow_since(&location("big").uri).is_none());
+        cache.mark_slow(&location("gone").uri);
+        request(false);
+        assert!(cache.slow_since(&location("gone").uri).is_none());
+    }
+
+    #[test]
+    fn slow_downloads_take_turns() {
+        let dir = TestDir::new("turns");
+        let cache = Cache::open(&dir.0).unwrap();
+        let firsts = Mutex::new(Vec::new());
+        for _ in 0..3 {
+            fetch_changelogs(
+                &["a=3", "b=3", "c=3"].map(str::to_string),
+                later(),
+                Some(&cache),
+                |_| locations(&["a", "b", "c"]),
+                |jobs| {
+                    // only the first one starts, the others queue behind it
+                    firsts.lock().unwrap().push(jobs[0].package.clone());
+                    let mut results = vec![Download::Failed(TIMED_OUT.to_string())];
+                    results.resize_with(jobs.len(), || Download::Failed(NOT_STARTED.to_string()));
+                    results
+                },
+            );
+            // the markers need different times
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(*firsts.lock().unwrap(), ["a=3", "b=3", "c=3"]);
+    }
+
+    #[test]
+    fn rounds_have_a_bounded_size() {
+        let rounds = Mutex::new(Vec::new());
+        let sources: Vec<String> = (0..MAX_BATCH * 2 + 1).map(|i| format!("pkg{i}")).collect();
+        let fetched = fetch_changelogs(
+            &sources
+                .iter()
+                .map(|source| format!("{source}=3"))
+                .collect::<Vec<_>>(),
+            later(),
+            None,
+            |_| locations(&sources.iter().map(String::as_str).collect::<Vec<_>>()),
+            |jobs| {
+                rounds.lock().unwrap().push(jobs.len());
+                download_sources(jobs)
+            },
+        );
+        assert_eq!(*rounds.lock().unwrap(), [MAX_BATCH, MAX_BATCH, 1]);
+        assert!(fetched.entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn cache_needs_a_private_directory_of_its_own() {
+        let dir = TestDir::new("private");
+        fs::create_dir(&dir.0).unwrap();
+        // explicitly, as the umask could restrict the mode on creation
+        fs::set_permissions(&dir.0, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert!(Cache::open(&dir.0).is_none());
+        let target = TestDir::new("target");
+        fs::DirBuilder::new().mode(0o700).create(&target.0).unwrap();
+        let link = TestDir::new("link");
+        std::os::unix::fs::symlink(&target.0, &link.0).unwrap();
+        assert!(Cache::open(&link.0).is_none());
+    }
+
+    #[test]
+    fn concurrent_writes_publish_whole_entries() {
+        let dir = TestDir::new("concurrent");
+        let cache = Cache::open(&dir.0).unwrap();
+        let uri = location("foo").uri;
+        let content = text("foo").repeat(200);
+        thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        cache.put(&uri, &content);
+                        assert_eq!(cache.get(&uri).as_deref(), Some(content.as_str()));
+                    }
+                });
+            }
+        });
+        let files: Vec<_> = fs::read_dir(&dir.0).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn download_report_tells_failures_apart() {
+        let report = DownloadReport::parse(
+            "Get:1 https://example.invalid bash 5.2 Changelog [116 kB]\n\
+             Err:2 https://example.invalid curl 8.14 Changelog\n  \
+             Changelog unavailable for curl=8.14 (404  Not Found [IP: 192.0.2.1 443])\n\
+             Get:3 https://example.invalid perl 5.40 Changelog [1 MB]\n",
+            "E: Failed to fetch https://example.invalid/vim_changelog  \
+             Could not connect to example.invalid:443 (192.0.2.1), connection timed out\n",
+        );
+        let exited = Command::new("true").status().ok();
+        assert_eq!(
+            report.failure(&location("curl"), exited),
+            "Changelog not available from the repository (HTTP 404)"
+        );
+        let vim = Location {
+            uri: "https://example.invalid/vim_changelog".to_string(),
+            file: "vim.changelog".to_string(),
+        };
+        assert_eq!(report.failure(&vim, exited), TIMED_OUT);
+        // stopped at the deadline: started downloads timed out, the others did not start
+        assert_eq!(report.failure(&location("perl"), None), TIMED_OUT);
+        assert_eq!(report.failure(&location("zsh"), None), NOT_STARTED);
+        // nothing came back from this repository, APT still waits for the connection
+        let unreachable = Location {
+            uri: "https://unreachable.invalid/zsh".to_string(),
+            file: "zsh.changelog".to_string(),
+        };
+        assert_eq!(report.failure(&unreachable, None), TIMED_OUT);
+        assert_eq!(
+            report.failure(&location("zsh"), exited),
+            "Changelog download failed"
+        );
     }
 
     #[test]
@@ -716,84 +1674,167 @@ mod tests {
         let start = Instant::now();
         let mut command = Command::new("sh");
         command.args(["-c", "sleep 30 & echo done"]);
-        let (status, output, _) = run(command, Instant::now() + Duration::from_secs(10)).unwrap();
-        assert!(status.success());
-        assert_eq!(output, "done\n");
+        let output = run(command, Instant::now() + Duration::from_secs(10), || false).unwrap();
+        assert!(output.status.unwrap().success());
+        assert_eq!(output.stdout, "done\n");
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
     fn commands_stop_at_the_deadline() {
         let start = Instant::now();
-        let mut command = Command::new("sleep");
-        command.arg("30");
-        let result = run(command, Instant::now() + Duration::from_millis(200));
-        assert_eq!(result.unwrap_err(), TIMED_OUT);
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo started; sleep 30"]);
+        let output = run(command, Instant::now() + Duration::from_millis(200), || {
+            false
+        })
+        .unwrap();
+        assert!(output.status.is_none());
+        assert_eq!(output.stdout, "started\n");
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
-    #[ignore = "downloads a changelog from the configured APT repositories"]
+    fn commands_stop_when_asked() {
+        let start = Instant::now();
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        let mut checks = 0;
+        let output = run(command, Instant::now() + Duration::from_secs(20), || {
+            checks += 1;
+            checks == 2
+        })
+        .unwrap();
+        assert!(output.status.is_none() && output.stopped);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[ignore = "downloads changelogs from the configured APT repositories"]
     fn real_download() {
-        let version = Command::new("dpkg-query")
-            .args(["-W", "-f=${Version}", "bash"])
-            .output()
-            .unwrap();
-        assert!(version.status.success());
-        let mut package = change("bash", None);
-        package.new_version = Some(String::from_utf8(version.stdout).unwrap());
-        let groups = get_update_changelogs(vec![package]);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].error, None, "{groups:?}");
-        assert_eq!(groups[0].source.as_deref(), Some("bash"));
-        assert_eq!(groups[0].entries.len(), 1);
+        let dir = TestDir::new("real");
+        let installed = |package: &str| {
+            let version = Command::new("dpkg-query")
+                .args(["-W", "-f=${Version}", package])
+                .output()
+                .unwrap();
+            assert!(version.status.success());
+            let mut change = change(package, None);
+            change.new_version = Some(String::from_utf8(version.stdout).unwrap());
+            change
+        };
+        let changes = vec![installed("bash"), installed("coreutils")];
+        for _ in 0..2 {
+            let groups = get_update_changelogs(changes.clone(), &dir.0);
+            assert_eq!(groups.len(), 2, "{groups:?}");
+            assert!(
+                groups.iter().all(|group| group.error.is_none()),
+                "{groups:?}"
+            );
+            assert_eq!(groups[0].source.as_deref(), Some("bash"));
+            assert_eq!(groups[0].entries.len(), 1);
+        }
+        assert_eq!(
+            fs::read_dir(&dir.0)
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().path().extension() == Some("gz".as_ref()))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn oversized_downloads_leave_the_rest_of_the_round_to_retry() {
+        let rounds = Mutex::new(Vec::new());
+        let fetched = fetch_changelogs(
+            &["big=3", "other=3", "done=3"].map(str::to_string),
+            later(),
+            None,
+            |_| locations(&["big", "other", "done"]),
+            |jobs| {
+                let mut rounds = rounds.lock().unwrap();
+                rounds.push(jobs.len());
+                if rounds.len() > 1 {
+                    return download_sources(jobs);
+                }
+                vec![
+                    Download::Failed(TOO_LARGE.to_string()),
+                    Download::Retry,
+                    Download::Done(text("done")),
+                ]
+            },
+        );
+        assert_eq!(*rounds.lock().unwrap(), [3, 1]);
+        assert_eq!(fetched.entries[0].as_ref().unwrap_err(), TOO_LARGE);
+        assert!(fetched.entries[1].is_ok());
+        assert!(fetched.entries[2].is_ok());
+    }
+
+    #[test]
+    fn download_size_finds_unfinished_downloads() {
+        let dir = TestDir::new("size");
+        fs::create_dir_all(dir.0.join("tmp/apt-changelog-x")).unwrap();
+        fs::write(dir.0.join("done.changelog"), "x".repeat(10)).unwrap();
+        fs::write(
+            dir.0.join("tmp/apt-changelog-x/big.changelog"),
+            "x".repeat(30),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("/", dir.0.join("tmp/link")).unwrap();
+        assert_eq!(
+            download_size(&dir.0),
+            (40, Some((30, "big.changelog".to_string())))
+        );
     }
 
     #[test]
     fn readable_download_errors() {
-        for (error, expected) in [
+        for (reason, expected) in [
             (
-                "E: Failed to fetch https://metadata.ftp-master.debian.org/changelogs/main/n/nss/nss_3.110-1+deb13u5_changelog  Changelog unavailable for nss=2:3.110-1+deb13u5 (404  Not Found [IP: 146.75.122.132 443])",
+                "Changelog unavailable for nss=2:3.110-1+deb13u5 (404  Not Found [IP: 146.75.122.132 443])",
                 "Changelog not available from the repository (HTTP 404)",
             ),
             (
-                "E: Failed to fetch https://enterprise.proxmox.com/changelog  401  Unauthorized [IP: 51.91.38.34 443]",
+                "401  Unauthorized [IP: 51.91.38.34 443]",
                 "Changelog download failed (HTTP 401)",
             ),
             (
-                "E: Failed to fetch https://example.invalid/changelog  503  Service Unavailable [IP: 192.0.2.1 443]",
+                "503  Service Unavailable [IP: 192.0.2.1 443]",
                 "Changelog download failed (HTTP 503)",
             ),
             (
-                "E: Failed to fetch https://example.invalid/changelog  Temporary failure resolving 'example.invalid'",
+                "Temporary failure resolving 'example.invalid'",
                 "Changelog download failed - could not resolve the repository host",
             ),
             (
-                "E: Failed to fetch https://example.invalid/changelog  Could not connect to example.invalid:443 (192.0.2.1), connection timed out",
+                "Could not connect to example.invalid:443 (192.0.2.1), connection timed out",
                 "Changelog download timed out",
             ),
             (
-                "E: Failed to fetch https://example.invalid/changelog  Certificate verification failed: The certificate is NOT trusted. [IP: 192.0.2.1 443]",
+                "Certificate verification failed: The certificate is NOT trusted. [IP: 192.0.2.1 443]",
                 "Changelog download failed - the repository certificate is not trusted",
             ),
             (
-                "E: Failed to fetch changelog:/foo  Changelog unavailable for foo=1",
+                "Changelog unavailable for foo=1",
                 "Changelog not available from the repository",
             ),
             (
-                "E: Failed to fetch https://example.invalid/changelog  Changelog unavailable for \
-                 foo=1 (401  Unauthorized [IP: 192.0.2.1 443])",
+                "Changelog unavailable for foo=1 (401  Unauthorized [IP: 192.0.2.1 443])",
                 "Changelog download failed (HTTP 401)",
             ),
             (
-                "unexpected output\nwith private details",
-                "Changelog download failed (APT exit code 100)",
+                "Changelog unavailable for foo=1 (Temporary failure resolving 'example.invalid')",
+                "Changelog download failed - could not resolve the repository host",
             ),
-            ("", "Changelog download failed (APT exit code 100)"),
+            (
+                "Changelog unavailable for foo=1 (Could not connect to example.invalid:443 \
+                 (192.0.2.1), connection timed out)",
+                "Changelog download timed out",
+            ),
+            ("unexpected output", "Changelog download failed"),
         ] {
-            assert_eq!(download_error(error, Some(100)), expected);
+            assert_eq!(describe_failure(reason), expected);
         }
-        assert_eq!(download_error("", None), "Changelog download interrupted");
     }
 
     #[test]
@@ -802,6 +1843,7 @@ mod tests {
             download_changelogs(
                 Vec::new(),
                 later(),
+                None,
                 |_| panic!(),
                 |_| panic!(),
                 no_installed
