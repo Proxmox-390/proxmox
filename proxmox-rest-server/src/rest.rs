@@ -375,9 +375,18 @@ fn log_response(
             "{ip} - {auth_id} [{datetime}] \"{method} {path}\" {status} {size} {user_agent}",
             ip = peer.ip(),
             status = status.as_str(),
-            size = resp.body().size_hint().lower(),
+            size = logged_size(resp.body()),
             user_agent = user_agent.unwrap_or_else(|| "-".to_string()),
         ));
+    }
+}
+
+/// Streamed bodies, which include compressed API responses, have no exact size, and `-` keeps
+/// them apart from empty ones.
+fn logged_size(body: &Body) -> String {
+    match body.size_hint().exact() {
+        Some(size) => size.to_string(),
+        None => "-".to_string(),
     }
 }
 
@@ -1833,6 +1842,15 @@ mod tests {
                 "failed for {file}"
             );
         }
+    }
+
+    #[test]
+    fn only_known_response_sizes_are_logged() {
+        assert_eq!(logged_size(&Body::empty()), "0");
+        assert_eq!(logged_size(&Body::from(b"data".to_vec())), "4");
+
+        let chunks = futures::stream::iter([Ok::<_, Error>(b"data".to_vec())]);
+        assert_eq!(logged_size(&Body::wrap_stream(chunks)), "-");
     }
 
     #[test]
