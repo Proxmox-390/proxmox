@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use serde::Serialize;
 
 use proxmox_deb_changelog::{
     ChangelogEntry, VersionRange, parse_changelog, read_installed_changelog,
@@ -28,11 +29,13 @@ use crate::{PackageAction, PackageChange, TransactionChangelog};
 const MAX_CHANGELOG_SIZE: u64 = 16 * 1024 * 1024;
 // below the 30 second timeout for proxied API requests, so that the result still arrives
 const TIMEOUT: Duration = Duration::from_secs(25);
+const PREFETCH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 // bounds the downloads a run keeps in /tmp, often a tmpfs, and the memory to read them
 const MAX_BATCH: usize = 32;
 // what the downloads of a run may take in /tmp, as APT does not limit the size of a changelog
 const MAX_ROUND_SIZE: u64 = 4 * MAX_CHANGELOG_SIZE;
 const TOO_LARGE: &str = "Downloaded changelog is too large";
+const RECENT_USE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const TIMED_OUT: &str = "Changelog download timed out";
 const NOT_STARTED: &str = "Changelog download did not start before the time limit - load the changelogs again to continue";
 const NOT_IN_LISTS: &str = "Package version not found in the package lists - refresh the updates";
@@ -63,6 +66,9 @@ pub fn get_update_changelogs(
 ) -> Vec<TransactionChangelog> {
     let deadline = Instant::now() + TIMEOUT;
     let cache = Cache::open(cache_dir);
+    if let Some(cache) = &cache {
+        cache.mark_used();
+    }
     download_changelogs(
         changes,
         deadline,
@@ -74,6 +80,79 @@ pub fn get_update_changelogs(
             result => result.map(Some).map_err(|err| err.to_string()),
         },
     )
+}
+
+/// What [`prefetch_update_changelogs`] did.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct PrefetchSummary {
+    /// How many changelogs got downloaded into the cache.
+    pub downloaded: usize,
+    /// How many changelogs could not be downloaded or stored, apart from those that the repository
+    /// does not provide.
+    pub failed: usize,
+    /// Why the first of them failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Downloads the changelogs of pending package changes into `cache_dir` ahead of a request by
+/// [`get_update_changelogs`], for example after refreshing the package lists, so that a request
+/// can answer from the cache. Only does so if the changelogs of pending updates were requested
+/// within the last 30 days, otherwise it empties the cache, to not download changelogs that nobody
+/// looks at. Returns `None` if it did not run.
+pub fn prefetch_update_changelogs(
+    changes: Vec<PackageChange>,
+    cache_dir: &Path,
+) -> Result<Option<PrefetchSummary>, String> {
+    let deadline = Instant::now() + PREFETCH_TIMEOUT;
+    let cache = Cache::open(cache_dir)
+        .ok_or_else(|| format!("Could not open the changelog cache {cache_dir:?}"))?;
+    if !cache.used_recently() {
+        cache.prune(&HashSet::new());
+        return Ok(None);
+    }
+    Ok(Some(prefetch(
+        changes,
+        deadline,
+        &cache,
+        |packages| resolve_locations(packages, deadline),
+        |jobs| apt_download(jobs, deadline),
+    )))
+}
+
+fn prefetch(
+    changes: Vec<PackageChange>,
+    deadline: Instant,
+    cache: &Cache,
+    resolve: impl FnOnce(&[String]) -> Vec<Result<Location, String>>,
+    download: impl FnMut(&[&Job]) -> Vec<Download>,
+) -> PrefetchSummary {
+    let packages = download_packages(&pending_changes(changes));
+    let fetched = fetch_changelogs(&packages, deadline, Some(cache), resolve, download);
+    let mut summary = PrefetchSummary {
+        downloaded: fetched.stored,
+        ..Default::default()
+    };
+    let errors = fetched.job_of.values().filter_map(|job| job.as_ref().err());
+    let errors = errors.chain(
+        fetched
+            .entries
+            .iter()
+            .filter_map(|entries| entries.as_ref().err()),
+    );
+    for error in errors.filter(|error| !error.starts_with(NOT_AVAILABLE)) {
+        summary.failed += 1;
+        summary.error.get_or_insert_with(|| error.clone());
+    }
+    let unstored = fetched.downloaded - fetched.stored;
+    if unstored > 0 {
+        summary.failed += unstored;
+        summary
+            .error
+            .get_or_insert_with(|| "Could not store a changelog in the cache".to_string());
+    }
+    summary
 }
 
 /// Where APT downloads the changelog of a package from, and the file it names it, the source
@@ -203,6 +282,8 @@ struct Fetched {
     jobs: Vec<Job>,
     job_of: HashMap<String, Result<usize, String>>,
     entries: Vec<Entries>,
+    downloaded: usize,
+    stored: usize,
 }
 
 /// Resolves the changelog locations of the packages and takes the changelogs from the cache, or
@@ -251,6 +332,8 @@ fn fetch_changelogs(
     if let Some(cache) = cache {
         missing.sort_by_key(|&index| cache.slow_since(&jobs[index].location.uri));
     }
+    let mut downloaded = 0;
+    let mut stored = 0;
     while !missing.is_empty() {
         if Instant::now() >= deadline {
             for index in missing {
@@ -274,8 +357,9 @@ fn fetch_changelogs(
                 .unwrap_or_else(|| Download::Failed("Changelog download failed".to_string()));
             let parsed = match result {
                 Download::Done(text) => parse_download(Ok(&text)).inspect(|_| {
-                    if let Some(cache) = cache {
-                        cache.put(&jobs[index].location.uri, &text);
+                    downloaded += 1;
+                    if cache.is_some_and(|cache| cache.put(&jobs[index].location.uri, &text)) {
+                        stored += 1;
                     }
                 }),
                 Download::Failed(err) => {
@@ -303,6 +387,8 @@ fn fetch_changelogs(
         jobs,
         job_of,
         entries: entries.into_iter().map(Option::unwrap).collect(),
+        downloaded,
+        stored,
     }
 }
 
@@ -814,8 +900,9 @@ impl Cache {
     }
 
     /// Stores the changelog, best effort, as the next request downloads it again otherwise. Without
-    /// syncing, as a damaged entry fails to decompress and gets downloaded again as well.
-    fn put(&self, uri: &str, text: &str) {
+    /// syncing, as a damaged entry fails to decompress and gets downloaded again as well. Returns
+    /// whether it got stored.
+    fn put(&self, uri: &str, text: &str) -> bool {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
         let name = Self::name(uri);
         let tmp = format!(
@@ -839,6 +926,7 @@ impl Cache {
         } else {
             self.remove(&tmp);
         }
+        stored.is_ok()
     }
 
     /// Remembers when the download of the changelog did not finish in time, so that the next
@@ -888,6 +976,38 @@ impl Cache {
                 self.remove(name);
             }
         }
+    }
+
+    fn mark_used(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if let Ok(mut file) =
+            self.open_file("last-use", libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC)
+        {
+            let _ = writeln!(file, "{now}");
+        }
+    }
+
+    /// Whether the cache got used in the last 30 days, by the time it records as text, so that its
+    /// file times do not matter.
+    fn used_recently(&self) -> bool {
+        let mut text = String::new();
+        let Ok(file) = self.open_file("last-use", libc::O_RDONLY) else {
+            return false;
+        };
+        if file.take(64).read_to_string(&mut text).is_err() {
+            return false;
+        }
+        let Ok(used) = text.trim().parse::<u64>() else {
+            return false;
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(used) < RECENT_USE.as_secs()
     }
 }
 
@@ -1452,9 +1572,10 @@ mod tests {
                 },
             )
         };
-        request(&["foo", "bar"]);
-        assert_eq!(*downloads.lock().unwrap(), 2);
+        let first = request(&["foo", "bar"]);
+        assert_eq!(first.downloaded, 2);
         let second = request(&["foo", "bar"]);
+        assert_eq!(second.downloaded, 0);
         assert_eq!(*downloads.lock().unwrap(), 2);
         assert_eq!(second.entries[0].as_ref().unwrap().len(), 3);
 
@@ -1489,9 +1610,66 @@ mod tests {
                     ])
                 },
             );
+            assert_eq!(fetched.downloaded, 0);
             assert_eq!(fetched.entries.len(), expected);
             assert!(fetched.entries[0].is_err());
         }
+    }
+
+    #[test]
+    fn prefetch_needs_a_recent_request() {
+        let dir = TestDir::new("prefetch");
+        let cache = Cache::open(&dir.0).unwrap();
+        assert!(cache.put(&location("foo").uri, &text("foo")));
+        assert!(!cache.used_recently());
+        assert_eq!(
+            prefetch_update_changelogs(vec![change("foo", Some("1"))], &dir.0),
+            Ok(None)
+        );
+        assert!(cache.get(&location("foo").uri).is_none());
+        cache.mark_used();
+        assert!(cache.used_recently());
+        fs::write(dir.0.join("last-use"), "1000\n").unwrap();
+        assert!(!cache.used_recently());
+    }
+
+    #[test]
+    fn prefetch_reports_failures_but_not_missing_changelogs() {
+        let dir = TestDir::new("summary");
+        let cache = Cache::open(&dir.0).unwrap();
+        let summary = prefetch(
+            vec![
+                change("ok", Some("1")),
+                change("missing", Some("1")),
+                change("broken", Some("1")),
+            ],
+            later(),
+            &cache,
+            |_| locations(&["ok", "missing", "broken"]),
+            |jobs| {
+                jobs.iter()
+                    .map(|job| match job.location.source().unwrap() {
+                        "ok" => Ok(text("ok")),
+                        "missing" => Err(describe_failure(
+                            "Changelog unavailable for missing=3 (404  Not Found [IP: 192.0.2.1 80])",
+                        )),
+                        // APT wraps other failures the same way
+                        _ => Err(describe_failure(
+                            "Changelog unavailable for broken=3 (401  Unauthorized [IP: 192.0.2.1 443])",
+                        )),
+                    })
+                    .map(Download::from)
+                    .collect()
+            },
+        );
+        assert_eq!(
+            summary,
+            PrefetchSummary {
+                downloaded: 1,
+                failed: 1,
+                error: Some("Changelog download failed (HTTP 401)".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -1605,7 +1783,7 @@ mod tests {
             for _ in 0..4 {
                 scope.spawn(|| {
                     for _ in 0..50 {
-                        cache.put(&uri, &content);
+                        assert!(cache.put(&uri, &content));
                         assert_eq!(cache.get(&uri).as_deref(), Some(content.as_str()));
                     }
                 });

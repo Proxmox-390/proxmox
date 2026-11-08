@@ -30,7 +30,7 @@ pub use changelogs::get_transaction_changelogs;
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod update_changelogs;
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
-pub use update_changelogs::get_update_changelogs;
+pub use update_changelogs::{PrefetchSummary, get_update_changelogs, prefetch_update_changelogs};
 
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod logs;
