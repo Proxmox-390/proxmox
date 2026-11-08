@@ -437,6 +437,10 @@ api(GET => '/nodes/{node}/apt/update', 'list_available_updates', 'return-name' =
 api(POST => '/nodes/{node}/apt/update', 'update_apt_database', 'output-type' => 'PveUpid', 'param-name' => 'AptUpdateParams');
 api(GET => '/nodes/{node}/apt/changelog', 'get_package_changelog', 'output-type' => 'String');
 api(GET => '/nodes/{node}/apt/update-changelogs', 'get_update_changelogs', 'output-type' => 'Vec<TransactionChangelog>');
+api(GET => '/nodes/{node}/apt/history', 'list_apt_history', 'output-type' => 'Vec<HistoryEntry>');
+api(GET => '/nodes/{node}/apt/termlog', 'get_apt_term_log', 'output-type' => 'String');
+api(GET => '/nodes/{node}/apt/installed-changelog', 'get_installed_changelog', 'output-type' => 'Vec<ChangelogEntry>');
+api(GET => '/nodes/{node}/apt/transaction-changelogs', 'get_transaction_changelogs', 'output-type' => 'Vec<TransactionChangelog>');
 api(GET => '/nodes/{node}/apt/versions', 'get_package_versions', 'return-name' => 'InstalledPackage');
 api(GET => '/nodes/{node}/apt/repositories', 'get_apt_repositories', 'output-type' => 'APTRepositoriesResult');
 

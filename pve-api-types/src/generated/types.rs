@@ -5055,6 +5055,26 @@ serde_plain::derive_display_from_serialize!(FwConntrackHelper);
 serde_plain::derive_fromstr_from_deserialize!(FwConntrackHelper);
 
 #[api]
+/// Format of the output, 'styled' keeps bold, dim and the basic foreground
+/// colors as SGR escape sequences, each setting the complete style and none
+/// spanning a line break.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum GetAptTermLogFormat {
+    #[serde(rename = "plain")]
+    #[default]
+    /// plain.
+    Plain,
+    #[serde(rename = "styled")]
+    /// styled.
+    Styled,
+    /// Unknown variants for forward compatibility.
+    #[serde(untagged)]
+    UnknownEnumValue(FixedString),
+}
+serde_plain::derive_display_from_serialize!(GetAptTermLogFormat);
+serde_plain::derive_fromstr_from_deserialize!(GetAptTermLogFormat);
+
+#[api]
 /// Action to check
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum GetCephCmdSafetyAction {

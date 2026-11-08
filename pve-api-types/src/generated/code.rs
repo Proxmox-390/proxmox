@@ -785,6 +785,17 @@ pub trait PveClient {
         Err(Error::Other("get_apt_repositories not implemented"))
     }
 
+    /// Get the terminal output of a past APT transaction.
+    async fn get_apt_term_log(
+        &self,
+        node: &str,
+        format: Option<GetAptTermLogFormat>,
+        start_index: Option<u32>,
+        start_time: i64,
+    ) -> Result<String, Error> {
+        Err(Error::Other("get_apt_term_log not implemented"))
+    }
+
     /// Get the Ceph configuration database.
     async fn get_ceph_cfg_db(&self, node: &str) -> Result<Vec<CephConfigDbEntry>, Error> {
         Err(Error::Other("get_ceph_cfg_db not implemented"))
@@ -871,6 +882,18 @@ pub trait PveClient {
         Err(Error::Other("get_ceph_pool_status not implemented"))
     }
 
+    /// Get the Debian changelog that an installed package ships, optionally
+    /// limited to a version range.
+    async fn get_installed_changelog(
+        &self,
+        node: &str,
+        name: String,
+        since_version: Option<String>,
+        to_version: Option<String>,
+    ) -> Result<Vec<ChangelogEntry>, Error> {
+        Err(Error::Other("get_installed_changelog not implemented"))
+    }
+
     /// Get package changelogs.
     async fn get_package_changelog(
         &self,
@@ -917,6 +940,17 @@ pub trait PveClient {
         Err(Error::Other("get_task_status not implemented"))
     }
 
+    /// Get the changelog entries for the package changes of a past APT
+    /// transaction, from the changelogs of the installed packages.
+    async fn get_transaction_changelogs(
+        &self,
+        node: &str,
+        start_index: Option<u32>,
+        start_time: i64,
+    ) -> Result<Vec<TransactionChangelog>, Error> {
+        Err(Error::Other("get_transaction_changelogs not implemented"))
+    }
+
     /// Get the changelog entries for pending updates, grouped by source
     /// package.
     async fn get_update_changelogs(&self, node: &str) -> Result<Vec<TransactionChangelog>, Error> {
@@ -939,6 +973,18 @@ pub trait PveClient {
     /// most parameters are silently ignored.
     async fn init_ceph(&self, node: &str, params: InitCeph) -> Result<(), Error> {
         Err(Error::Other("init_ceph not implemented"))
+    }
+
+    /// List past APT transactions and their package changes, newest first.
+    async fn list_apt_history(
+        &self,
+        node: &str,
+        limit: Option<u64>,
+        package: Option<String>,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<Vec<HistoryEntry>, Error> {
+        Err(Error::Other("list_apt_history not implemented"))
     }
 
     /// List available updates.
@@ -2606,6 +2652,25 @@ where
         Ok(self.0.get(url).await?.expect_json()?.data)
     }
 
+    /// Get the terminal output of a past APT transaction.
+    async fn get_apt_term_log(
+        &self,
+        node: &str,
+        format: Option<GetAptTermLogFormat>,
+        start_index: Option<u32>,
+        start_time: i64,
+    ) -> Result<String, Error> {
+        let url = &ApiPathBuilder::new(format!(
+            "/api2/extjs/nodes/{}/apt/termlog",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        ))
+        .maybe_arg("format", &format)
+        .maybe_arg("start-index", &start_index)
+        .arg("start-time", &start_time)
+        .build();
+        Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
     /// Get the Ceph configuration database.
     async fn get_ceph_cfg_db(&self, node: &str) -> Result<Vec<CephConfigDbEntry>, Error> {
         let url = &format!(
@@ -2755,6 +2820,26 @@ where
         Ok(self.0.get(url).await?.expect_json()?.data)
     }
 
+    /// Get the Debian changelog that an installed package ships, optionally
+    /// limited to a version range.
+    async fn get_installed_changelog(
+        &self,
+        node: &str,
+        name: String,
+        since_version: Option<String>,
+        to_version: Option<String>,
+    ) -> Result<Vec<ChangelogEntry>, Error> {
+        let url = &ApiPathBuilder::new(format!(
+            "/api2/extjs/nodes/{}/apt/installed-changelog",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        ))
+        .arg("name", &name)
+        .maybe_arg("since-version", &since_version)
+        .maybe_arg("to-version", &to_version)
+        .build();
+        Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
     /// Get package changelogs.
     async fn get_package_changelog(
         &self,
@@ -2858,6 +2943,24 @@ where
         Ok(self.0.get(url).await?.expect_json()?.data)
     }
 
+    /// Get the changelog entries for the package changes of a past APT
+    /// transaction, from the changelogs of the installed packages.
+    async fn get_transaction_changelogs(
+        &self,
+        node: &str,
+        start_index: Option<u32>,
+        start_time: i64,
+    ) -> Result<Vec<TransactionChangelog>, Error> {
+        let url = &ApiPathBuilder::new(format!(
+            "/api2/extjs/nodes/{}/apt/transaction-changelogs",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        ))
+        .maybe_arg("start-index", &start_index)
+        .arg("start-time", &start_time)
+        .build();
+        Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
     /// Get the changelog entries for pending updates, grouped by source
     /// package.
     async fn get_update_changelogs(&self, node: &str) -> Result<Vec<TransactionChangelog>, Error> {
@@ -2898,6 +3001,27 @@ where
             percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
         );
         self.0.post(url, &params).await?.nodata()
+    }
+
+    /// List past APT transactions and their package changes, newest first.
+    async fn list_apt_history(
+        &self,
+        node: &str,
+        limit: Option<u64>,
+        package: Option<String>,
+        since: Option<i64>,
+        until: Option<i64>,
+    ) -> Result<Vec<HistoryEntry>, Error> {
+        let url = &ApiPathBuilder::new(format!(
+            "/api2/extjs/nodes/{}/apt/history",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        ))
+        .maybe_arg("limit", &limit)
+        .maybe_arg("package", &package)
+        .maybe_arg("since", &since)
+        .maybe_arg("until", &until)
+        .build();
+        Ok(self.0.get(url).await?.expect_json()?.data)
     }
 
     /// List available updates.

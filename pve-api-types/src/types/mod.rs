@@ -23,7 +23,8 @@ pub mod verifiers;
 use proxmox_fixed_string::FixedString;
 
 pub use proxmox_apt_api_types::APTRepositoriesResult;
-pub use proxmox_apt_history::TransactionChangelog;
+pub use proxmox_apt_history::{HistoryEntry, TransactionChangelog};
+pub use proxmox_deb_changelog::ChangelogEntry;
 
 include!("../generated/types.rs");
 
