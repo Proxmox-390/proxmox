@@ -341,6 +341,7 @@ fn log_response(
 
     let status = resp.status();
     if status.is_client_error() || status.is_server_error() {
+        let path = without_query(path);
         let reason = status.canonical_reason().unwrap_or("unknown reason");
 
         let message = match resp.extensions().get::<ErrorMessageExtension>() {
@@ -379,6 +380,15 @@ fn log_response(
             user_agent = user_agent.unwrap_or_else(|| "-".to_string()),
         ));
     }
+}
+
+/// Query values can hold secrets like passwords, and users who may read the system log need not see
+/// them.
+fn without_query(path_query: &str) -> &str {
+    // TODO: drop only the values of parameters that the API schema marks as sensitive.
+    path_query
+        .split_once('?')
+        .map_or(path_query, |(path, _query)| path)
 }
 
 /// Streamed bodies, which include compressed API responses, have no exact size, and `-` keeps
@@ -1842,6 +1852,15 @@ mod tests {
                 "failed for {file}"
             );
         }
+    }
+
+    #[test]
+    fn failed_requests_are_reported_without_their_query() {
+        assert_eq!(
+            without_query("/api2/json/access/tfa/user@pam/totp?password=secret"),
+            "/api2/json/access/tfa/user@pam/totp"
+        );
+        assert_eq!(without_query("/api2/json/version"), "/api2/json/version");
     }
 
     #[test]
