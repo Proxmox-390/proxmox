@@ -8,7 +8,9 @@ use proxmox_auth_api::types::{Authid, Tokenname, Userid};
 use proxmox_router::{ApiMethod, RpcEnvironment};
 use proxmox_schema::api;
 
+use crate::CachedUserInfo;
 use crate::acl;
+use crate::init::access_conf;
 use crate::token_shadow::{self};
 use crate::types::{
     ApiToken, ApiTokenSecret, DeletableTokenProperty, ENABLE_USER_SCHEMA, EXPIRE_USER_SCHEMA,
@@ -170,13 +172,14 @@ pub fn update_token(
     regenerate: Option<bool>,
     delete: Option<Vec<DeletableTokenProperty>>,
     digest: Option<ConfigDigest>,
+    rpcenv: &mut dyn RpcEnvironment,
 ) -> Result<Option<ApiTokenSecret>, Error> {
     let _lock = crate::user::lock_config()?;
 
     let (mut config, config_digest) = crate::user::config()?;
     config_digest.detect_modification(digest.as_ref())?;
 
-    let tokenid = Authid::from((userid, Some(token_name)));
+    let tokenid = Authid::from((userid.clone(), Some(token_name)));
     let tokenid_string = tokenid.to_string();
 
     let mut data: ApiToken = config.lookup("token", &tokenid_string)?;
@@ -207,6 +210,22 @@ pub fn update_token(
     }
 
     let new_secret = if regenerate == Some(true) {
+        let access_conf = access_conf();
+
+        let current_auth_id: Authid = rpcenv
+            .get_auth_id()
+            .expect("auth id could not be determined")
+            .parse()?;
+
+        // require ACL-modifying privileges to regenerate "foreign" tokens
+        if current_auth_id != Authid::from(userid) {
+            CachedUserInfo::new()?.check_privs(
+                &current_auth_id,
+                &["access", "acl"],
+                access_conf.acl_modify_privileges(),
+                access_conf.allow_partial_permission_match(),
+            )?;
+        }
         let secret = token_shadow::generate_and_set_secret(&tokenid)?;
         Some(ApiTokenSecret { tokenid, secret })
     } else {
