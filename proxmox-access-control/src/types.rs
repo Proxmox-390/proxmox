@@ -193,6 +193,10 @@ pub struct TokenApiEntry {
             optional: true,
             default: false,
         },
+        "allow-extension-on-regenerate": {
+            optional: true,
+            default: false,
+        },
     },
 )]
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, Updater)]
@@ -223,6 +227,12 @@ pub struct TokenPolicy {
     /// them, for example for tools unaware of the policy. Has no effect without `max-lifetime`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_to_max_lifetime: Option<bool>,
+
+    /// Allow extending the expiration date of an existing API token when its secret is
+    /// regenerated in the same request, despite `disallow-expiry-extension`. The maximum lifetime
+    /// still applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_extension_on_regenerate: Option<bool>,
 }
 
 impl TokenPolicy {
@@ -247,13 +257,22 @@ impl TokenPolicy {
     ///
     /// `expire` is the submitted and `current` the stored expiration date, 0 or less meaning none.
     /// An unchanged date always passes, so updates of tokens that predate the policy keep working.
-    pub fn check_expiry_update(&self, expire: i64, current: i64, now: i64) -> Result<(), Error> {
+    /// `regenerate` tells whether the update also regenerates the secret.
+    pub fn check_expiry_update(
+        &self,
+        expire: i64,
+        current: i64,
+        regenerate: bool,
+        now: i64,
+    ) -> Result<(), Error> {
         if expire == current {
             return Ok(());
         }
 
-        // removing the expiration date or moving it later extends the token
+        // removing the expiration date or moving it later extends the token; regenerating the
+        // secret along with it is like recreating the token, which the policy may allow
         if self.disallow_expiry_extension.unwrap_or_default()
+            && !(regenerate && self.allow_extension_on_regenerate.unwrap_or_default())
             && current > 0
             && (expire <= 0 || expire > current)
         {
@@ -444,6 +463,7 @@ mod tests {
         max_lifetime: None,
         disallow_expiry_extension: None,
         default_to_max_lifetime: None,
+        allow_extension_on_regenerate: None,
     };
 
     const REQUIRE_EXPIRY: TokenPolicy = TokenPolicy {
@@ -466,7 +486,16 @@ mod tests {
     }
 
     fn update_ok(policy: &TokenPolicy, expire: i64, current: i64) -> bool {
-        policy.check_expiry_update(expire, current, NOW).is_ok()
+        policy
+            .check_expiry_update(expire, current, false, NOW)
+            .is_ok()
+    }
+
+    // an update that also regenerates the secret
+    fn rotate_ok(policy: &TokenPolicy, expire: i64, current: i64) -> bool {
+        policy
+            .check_expiry_update(expire, current, true, NOW)
+            .is_ok()
     }
 
     #[test]
@@ -567,6 +596,27 @@ mod tests {
         // creation is unaffected
         assert!(create_ok(&NO_EXTENSION, NOW + 100));
         assert!(create_ok(&NO_EXTENSION, 0));
+    }
+
+    #[test]
+    fn allow_extension_on_regenerate() {
+        let policy = TokenPolicy {
+            allow_extension_on_regenerate: Some(true),
+            ..NO_EXTENSION
+        };
+        // extending or removing the date passes only together with a secret regeneration
+        assert!(rotate_ok(&policy, NOW + 200, CURRENT));
+        assert!(rotate_ok(&policy, 0, CURRENT));
+        assert!(!update_ok(&policy, NOW + 200, CURRENT));
+        // a policy without the setting ignores the regeneration
+        assert!(!rotate_ok(&NO_EXTENSION, NOW + 200, CURRENT));
+        // the maximum lifetime still bounds the extension
+        let bounded = TokenPolicy {
+            max_lifetime: Some(MAX as u64),
+            ..policy
+        };
+        assert!(rotate_ok(&bounded, NOW + MAX, CURRENT));
+        assert!(!rotate_ok(&bounded, NOW + MAX + 1, CURRENT));
     }
 
     #[test]

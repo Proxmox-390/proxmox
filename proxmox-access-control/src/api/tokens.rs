@@ -223,8 +223,12 @@ pub fn update_token(
 
     if let Some(expire) = expire {
         if let Some(policy) = crate::init::access_conf().token_policy()? {
-            let current = data.expire.unwrap_or(0);
-            policy.check_expiry_update(expire, current, proxmox_time::epoch_i64())?;
+            policy.check_expiry_update(
+                expire,
+                data.expire.unwrap_or(0),
+                regenerate.unwrap_or_default(),
+                proxmox_time::epoch_i64(),
+            )?;
         }
         data.expire = if expire > 0 { Some(expire) } else { None };
     }
