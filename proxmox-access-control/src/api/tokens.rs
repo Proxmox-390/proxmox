@@ -99,10 +99,20 @@ pub fn generate_token(
         );
     }
 
+    let policy = crate::init::access_conf().token_policy()?;
+    let now = proxmox_time::epoch_i64();
+
+    let expire = match expire {
+        Some(expire) if expire > 0 => Some(expire),
+        _ => policy
+            .and_then(|policy| policy.default_expire(now))
+            .or(expire),
+    };
+
     // check the policy before generating the secret to avoid leaving an orphaned entry in the
     // token shadow file on rejection
-    if let Some(policy) = crate::init::access_conf().token_policy()? {
-        policy.check_new_expiry(expire.unwrap_or(0), proxmox_time::epoch_i64())?;
+    if let Some(policy) = policy {
+        policy.check_new_expiry(expire.unwrap_or(0), now)?;
     }
 
     let secret = token_shadow::generate_and_set_secret(&tokenid)?;

@@ -189,6 +189,10 @@ pub struct TokenApiEntry {
             optional: true,
             default: false,
         },
+        "default-to-max-lifetime": {
+            optional: true,
+            default: false,
+        },
     },
 )]
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, Updater)]
@@ -214,9 +218,26 @@ pub struct TokenPolicy {
     /// still be deleted and recreated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallow_expiry_extension: Option<bool>,
+
+    /// Give API tokens created without an expiration date the maximum lifetime instead of rejecting
+    /// them, for example for tools unaware of the policy. Has no effect without `max-lifetime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_to_max_lifetime: Option<bool>,
 }
 
 impl TokenPolicy {
+    /// The expiration date for a token created without one: `now` plus the maximum lifetime if the
+    /// policy opts into defaulting, `None` otherwise.
+    pub fn default_expire(&self, now: i64) -> Option<i64> {
+        if self.default_to_max_lifetime.unwrap_or_default()
+            && let Some(max_lifetime) = self.max_lifetime
+        {
+            Some(now.saturating_add_unsigned(max_lifetime))
+        } else {
+            None
+        }
+    }
+
     /// Check the expiration date of a new token against the policy, 0 or less meaning none.
     pub fn check_new_expiry(&self, expire: i64, now: i64) -> Result<(), Error> {
         self.check_expiry_bounds(expire, now)
@@ -422,6 +443,7 @@ mod tests {
         require_expiry: None,
         max_lifetime: None,
         disallow_expiry_extension: None,
+        default_to_max_lifetime: None,
     };
 
     const REQUIRE_EXPIRY: TokenPolicy = TokenPolicy {
@@ -509,6 +531,27 @@ mod tests {
     fn unchanged_expiry_passes() {
         assert!(update_ok(&REQUIRE_EXPIRY, 0, 0));
         assert!(update_ok(&MAX_LIFETIME, NOW + MAX + 1, NOW + MAX + 1));
+    }
+
+    #[test]
+    fn default_to_max_lifetime() {
+        let policy = TokenPolicy {
+            default_to_max_lifetime: Some(true),
+            ..MAX_LIFETIME
+        };
+        assert_eq!(policy.default_expire(NOW), Some(NOW + MAX));
+        // only with a maximum lifetime to derive the default from, and only when opted into
+        assert_eq!(MAX_LIFETIME.default_expire(NOW), None);
+        let without_maximum = TokenPolicy {
+            default_to_max_lifetime: Some(true),
+            ..EMPTY
+        };
+        assert_eq!(without_maximum.default_expire(NOW), None);
+        let extreme = TokenPolicy {
+            max_lifetime: Some(u64::MAX),
+            ..policy
+        };
+        assert_eq!(extreme.default_expire(NOW), Some(i64::MAX));
     }
 
     #[test]
