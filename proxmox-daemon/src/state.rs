@@ -92,16 +92,28 @@ where
     futures::future::select(a, b).await;
 }
 
-/// Creates a task which listens for a `SIGINT` and then calls [`request_shutdown()`]. A signal
-/// before any *reload* request rules out a reload for good. One during a reload is passed on to
-/// the new server, which then stops right after it started.
+/// Creates a task which listens for a `SIGINT` or `SIGTERM` and then calls [`request_shutdown()`].
+/// A signal before any *reload* request rules out a reload for good. One during a reload is
+/// passed on to the new server, which then stops right after it started.
 pub fn shutdown_signal_task() -> Result<impl Future<Output = ()> + Send + 'static, Error> {
-    let mut stream = signal(SignalKind::interrupt())?;
-    latch_stop_on(libc::SIGINT)?;
+    let interrupt = shutdown_on_signal(libc::SIGINT, "SIGINT")?;
+    let terminate = shutdown_on_signal(libc::SIGTERM, "SIGTERM")?;
+
+    Ok(async move {
+        futures::future::join(interrupt, terminate).await;
+    })
+}
+
+fn shutdown_on_signal(
+    signum: libc::c_int,
+    name: &'static str,
+) -> Result<impl Future<Output = ()> + Send + 'static, Error> {
+    let mut stream = signal(SignalKind::from_raw(signum))?;
+    latch_stop_on(signum)?;
 
     Ok(async move {
         while stream.recv().await.is_some() {
-            log::info!("got shutdown request (SIGINT)");
+            log::info!("got shutdown request ({name})");
             request_shutdown();
         }
     })
