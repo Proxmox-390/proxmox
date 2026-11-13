@@ -20,21 +20,18 @@ impl SystemdNotify {
     /// If a `SystemdNotify::Status` message cannot be converted to a C-String this returns an
     /// `io::ErrorKind::InvalidInput`.
     pub fn notify(self) -> Result<(), io::Error> {
-        let cs;
-        let message = match self {
-            SystemdNotify::Ready => c"READY=1",
-            SystemdNotify::Reloading => c"RELOADING=1",
-            SystemdNotify::Stopping => c"STOPPING=1",
-            SystemdNotify::Status(msg) => {
-                cs = CString::new(msg)?;
-                &cs
-            }
-            SystemdNotify::MainPid(pid) => {
-                cs = CString::new(format!("MAINPID={pid}"))?;
-                &cs
-            }
-        };
+        let message = self.message()?;
         sys::check_call(unsafe { sys::sd_notify(0, message.as_ptr()) }).map(drop)
+    }
+
+    fn message(self) -> Result<CString, io::Error> {
+        Ok(match self {
+            SystemdNotify::Ready => c"READY=1".into(),
+            SystemdNotify::Reloading => c"RELOADING=1".into(),
+            SystemdNotify::Stopping => c"STOPPING=1".into(),
+            SystemdNotify::Status(msg) => CString::new(format!("STATUS={msg}"))?,
+            SystemdNotify::MainPid(pid) => CString::new(format!("MAINPID={pid}"))?,
+        })
     }
 }
 
@@ -120,5 +117,18 @@ impl Iterator for ListenFdNames {
         self.cur += 1;
         let name = String::from_utf8(unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec());
         Some((fd_num, name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemdNotify;
+
+    #[test]
+    fn status_is_sent_as_status_field() {
+        let message = SystemdNotify::Status("error during reload".into())
+            .message()
+            .unwrap();
+        assert_eq!(message.as_bytes(), b"STATUS=error during reload");
     }
 }
