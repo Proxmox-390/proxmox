@@ -400,8 +400,6 @@ where
         Either::Right((_, server_future)) => Some(server_future),
     };
 
-    let mut reloader = Some(reloader);
-
     if crate::is_reload_requested() {
         log::info!("daemon reload...");
         if let Err(e) = proxmox_systemd::notify::SystemdNotify::Reloading.notify() {
@@ -411,7 +409,7 @@ where
             log::error!("failed to wait on systemd-processing: {}", e);
         }
 
-        if let Err(e) = reloader.take().unwrap().fork_restart(pidfn) {
+        if let Err(e) = reloader.fork_restart(pidfn) {
             log::error!("error during reload: {}", e);
             let _ =
                 proxmox_systemd::notify::SystemdNotify::Status("error during reload".to_string())
@@ -419,6 +417,9 @@ where
         }
     } else {
         log::info!("daemon shutting down...");
+        // Close the reload copy of the listening socket, so that connection attempts get refused
+        // once the service dropped its listener, instead of waiting until the process exits.
+        drop(reloader);
     }
 
     if let Some(future) = finish_future {
@@ -475,5 +476,43 @@ mod tests {
         assert_eq!(unsafe { CStr::from_ptr(pointers[0]) }, c"a");
         assert_eq!(unsafe { CStr::from_ptr(pointers[1]) }, c"bc");
         assert!(pointers[2].is_null());
+    }
+
+    #[test]
+    fn stop_refuses_connections_once_the_service_dropped_its_listener() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
+        let (closed_sender, closed) = tokio::sync::oneshot::channel();
+        let (finish, finish_receiver) = tokio::sync::oneshot::channel::<()>();
+
+        let daemon = super::create_daemon::<_, _, tokio::net::TcpListener>(
+            ([127, 0, 0, 1], 0).into(),
+            move |listener| {
+                Ok(async move {
+                    crate::shutdown_future().await;
+                    let address = listener.local_addr()?;
+                    drop(listener);
+                    let _ = closed_sender.send(address);
+                    let _ = finish_receiver.await;
+                    Ok(())
+                })
+            },
+            None,
+        );
+        let connect_while_finishing = async move {
+            crate::request_shutdown();
+            let address = closed.await.unwrap();
+            let result = std::net::TcpStream::connect(address);
+            let _ = finish.send(());
+            result
+        };
+
+        let (daemon, connected) =
+            runtime.block_on(futures::future::join(daemon, connect_while_finishing));
+        daemon.unwrap();
+        let err = connected.expect_err("connection to stopping daemon was accepted");
+        assert_eq!(err.kind(), std::io::ErrorKind::ConnectionRefused);
     }
 }
