@@ -1,3 +1,31 @@
+rust-proxmox-daemon (1.1.0-1) trixie; urgency=medium
+
+  * avoid a reload hanging forever when another thread of the daemon was
+    spawning a process at that moment. The new server got stuck before it could
+    start, while systemd already knew it as the main process of the service.
+
+  * refuse connections on stop as soon as the service closed its listener,
+    instead of queuing them until the process exits and then resetting them.
+
+  * keep waiting for systemd to process the reload notifications if a signal
+    interrupts that wait, so that the new server only goes on once systemd knows
+    it as the new main process.
+
+  * pass a stop that arrives during a reload on to the new server, which then
+    shuts down through its regular stop path. Before, the new server could keep
+    running as main process of a stopping service until the systemd stop timeout
+    killed it. A stop that reaches the new server in its first moments, before
+    it set up its signal handling, still ends it at once. Whichever comes first,
+    a reload or a shutdown request, now decides for good.
+
+  * handle SIGTERM like SIGINT as a request for a graceful shutdown. Daemons
+    without their own SIGTERM handler, such as those of PBS and PDM, now stop
+    accepting connections, let open requests finish and wait for running workers
+    before they exit, up to the systemd stop timeout, instead of getting
+    terminated at once.
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 13 Nov 2026 20:34:04 +0100
+
 rust-proxmox-daemon (1.0.1-1) trixie; urgency=medium
 
   * reap the intermediate process of a reload before announcing the new main
