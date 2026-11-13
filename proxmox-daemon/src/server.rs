@@ -5,7 +5,6 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
-use std::panic::UnwindSafe;
 use std::path::PathBuf;
 use std::pin::{Pin, pin};
 
@@ -16,14 +15,13 @@ use nix::unistd::{ForkResult, fork};
 use proxmox_sys::fd::fd_change_cloexec;
 use proxmox_sys::fs::CreateOptions;
 
-type BoxedStoreFunc = Box<dyn FnOnce() -> Result<String, Error> + UnwindSafe + Send>;
-
 // Helper trait to "store" something in the environment to be reused after re-executing the
 // service on a reload.
 #[doc(hidden)] // not public api
 pub trait Reloadable: Sized {
     fn restore(var: &str) -> Result<Self, Error>;
-    fn get_store_func(&self) -> Result<BoxedStoreFunc, Error>;
+    /// Returns a close-on-exec duplicate of the descriptor to pass on to the re-executed service.
+    fn get_store_fd(&self) -> Result<OwnedFd, Error>;
 }
 
 // Manages things to be stored and reloaded upon reexec.
@@ -34,11 +32,11 @@ struct Reloader {
     self_exe: PathBuf,
 }
 
-// Currently we only need environment variables for storage, but in theory we could also add
-// variants which need temporary files or pipes...
+// A descriptor the re-executed service inherits, with its number in the environment variable
+// `name`.
 struct PreExecEntry {
     name: &'static str,
-    store_fn: BoxedStoreFunc,
+    fd: OwnedFd,
 }
 
 impl Reloader {
@@ -72,14 +70,15 @@ impl Reloader {
 
         self.pre_exec.push(PreExecEntry {
             name,
-            store_fn: res.get_store_func()?,
+            fd: res.get_store_fd()?,
         });
         Ok(res)
     }
 
     fn pre_exec(self) -> Result<(), Error> {
         for item in self.pre_exec {
-            unsafe { std::env::set_var(item.name, (item.store_fn)()?) };
+            fd_change_cloexec(item.fd.as_raw_fd(), false)?;
+            unsafe { std::env::set_var(item.name, item.fd.into_raw_fd().to_string()) };
         }
         Ok(())
     }
@@ -239,17 +238,13 @@ impl Reloader {
     }
 }
 
-fn fd_store_func(fd: RawFd) -> Result<BoxedStoreFunc, Error> {
-    let fd = unsafe {
+fn fd_store_dup(fd: RawFd) -> Result<OwnedFd, Error> {
+    Ok(unsafe {
         OwnedFd::from_raw_fd(nix::fcntl::fcntl(
             fd,
             nix::fcntl::FcntlArg::F_DUPFD_CLOEXEC(0),
         )?)
-    };
-    Ok(Box::new(move || {
-        fd_change_cloexec(fd.as_raw_fd(), false)?;
-        Ok(fd.into_raw_fd().to_string())
-    }))
+    })
 }
 
 /// NOTE: This must only be used for *async* I/O objects!
@@ -266,9 +261,8 @@ where
 
 // For now all we need to do is store and reuse a tcp listening socket:
 impl Reloadable for tokio::net::TcpListener {
-    // NOTE: The socket must not be closed when the store-function is called:
-    fn get_store_func(&self) -> Result<BoxedStoreFunc, Error> {
-        fd_store_func(self.as_raw_fd())
+    fn get_store_fd(&self) -> Result<OwnedFd, Error> {
+        fd_store_dup(self.as_raw_fd())
     }
 
     fn restore(var: &str) -> Result<Self, Error> {
@@ -278,9 +272,8 @@ impl Reloadable for tokio::net::TcpListener {
 
 // For now all we need to do is store and reuse a tcp listening socket:
 impl Reloadable for tokio::net::UnixListener {
-    // NOTE: The socket must not be closed when the store-function is called:
-    fn get_store_func(&self) -> Result<BoxedStoreFunc, Error> {
-        fd_store_func(self.as_raw_fd())
+    fn get_store_fd(&self) -> Result<OwnedFd, Error> {
+        fd_store_dup(self.as_raw_fd())
     }
 
     fn restore(var: &str) -> Result<Self, Error> {
