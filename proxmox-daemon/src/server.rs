@@ -175,7 +175,7 @@ impl Reloader {
                 }
                 // ensure systemd got the message about the new main PID before continuing, else it
                 // will get confused if the new main process sends its READY signal before that
-                if let Err(e) = proxmox_systemd::notify::barrier(u64::MAX) {
+                if let Err(e) = wait_for_systemd() {
                     log::error!("failed to wait on systemd-processing: {}", e);
                 }
 
@@ -405,7 +405,7 @@ where
         if let Err(e) = proxmox_systemd::notify::SystemdNotify::Reloading.notify() {
             log::error!("failed to notify systemd about the state change: {}", e);
         }
-        if let Err(e) = proxmox_systemd::notify::barrier(u64::MAX) {
+        if let Err(e) = wait_for_systemd() {
             log::error!("failed to wait on systemd-processing: {}", e);
         }
 
@@ -430,6 +430,17 @@ where
     Ok(())
 }
 
+/// Waits until systemd processed the notifications sent before. A signal handled by the calling
+/// thread ends the wait early, without systemd having caught up, so wait again then.
+fn wait_for_systemd() -> io::Result<()> {
+    loop {
+        match proxmox_systemd::notify::barrier(u64::MAX) {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 /// Wrapper for `nix::sys::socket::socketpair` defaulting to `O_CLOEXEC`.
 fn socketpair() -> Result<(OwnedFd, OwnedFd), Error> {
     use nix::sys::socket;
@@ -445,6 +456,13 @@ fn socketpair() -> Result<(OwnedFd, OwnedFd), Error> {
 mod tests {
     use std::ffi::{CStr, OsString};
     use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::net::UnixDatagram;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    // Serializes the tests that change or depend on process-wide state, like the environment.
+    static PROCESS_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn reexec_env_sets_stored_descriptors() {
@@ -480,6 +498,7 @@ mod tests {
 
     #[test]
     fn stop_refuses_connections_once_the_service_dropped_its_listener() {
+        let _lock = PROCESS_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
@@ -514,5 +533,91 @@ mod tests {
         daemon.unwrap();
         let err = connected.expect_err("connection to stopping daemon was accepted");
         assert_eq!(err.kind(), std::io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test]
+    fn barrier_wait_continues_after_an_interrupting_signal() {
+        let _lock = PROCESS_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+        // Any handled signal interrupts the wait, like a second SIGHUP does in a daemon.
+        extern "C" fn handle(_: libc::c_int) {}
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = handle as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::sigaction(libc::SIGUSR1, &action, &mut previous) },
+            0
+        );
+
+        let path = std::env::temp_dir().join(format!(
+            "proxmox-daemon-barrier-test-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let socket = UnixDatagram::bind(&path).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        unsafe { std::env::set_var("NOTIFY_SOCKET", &path) };
+
+        let waiter = unsafe { libc::pthread_self() };
+        let waiter_tid = unsafe { libc::gettid() };
+        // Stands in for systemd, holding back the first barrier until the wait for it was
+        // interrupted.
+        let manager = std::thread::spawn(move || {
+            let first = receive_barrier(&socket);
+            assert!(first.is_some(), "no barrier received");
+            wait_until_polling(waiter_tid);
+            assert_eq!(unsafe { libc::pthread_kill(waiter, libc::SIGUSR1) }, 0);
+            receive_barrier(&socket).is_some()
+        });
+        let result = super::wait_for_systemd();
+        let waited_again = manager.join().unwrap();
+
+        unsafe { std::env::remove_var("NOTIFY_SOCKET") };
+        let _ = std::fs::remove_file(&path);
+        unsafe { libc::sigaction(libc::SIGUSR1, &previous, std::ptr::null_mut()) };
+
+        result.expect("barrier wait failed");
+        assert!(
+            waited_again,
+            "barrier wait did not continue after the signal"
+        );
+    }
+
+    // Receives a barrier notification and returns the descriptor whose closing releases it.
+    fn receive_barrier(socket: &UnixDatagram) -> Option<OwnedFd> {
+        let mut data = [0u8; 64];
+        let mut iov = libc::iovec {
+            iov_base: data.as_mut_ptr().cast(),
+            iov_len: data.len(),
+        };
+        let mut control = [0u64; 8];
+        let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+        message.msg_iov = &mut iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control.as_mut_ptr().cast();
+        message.msg_controllen = std::mem::size_of_val(&control) as _;
+        let len =
+            unsafe { libc::recvmsg(socket.as_raw_fd(), &mut message, libc::MSG_CMSG_CLOEXEC) };
+        if len < 0 {
+            return None;
+        }
+        assert_eq!(&data[..len as usize], b"BARRIER=1");
+        let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+        assert!(!header.is_null(), "barrier without descriptor");
+        let fd = unsafe { std::ptr::read_unaligned(libc::CMSG_DATA(header).cast::<libc::c_int>()) };
+        Some(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    fn wait_until_polling(tid: libc::pid_t) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let wchan = std::fs::read_to_string(format!("/proc/self/task/{tid}/wchan"));
+            if wchan.is_ok_and(|wchan| wchan.contains("poll")) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
