@@ -1,10 +1,10 @@
 //! Helpers to implement restartable server listening for incoming connections.
 
-use std::ffi::CString;
+use std::ffi::{CString, OsString, c_char};
 use std::future::Future;
 use std::io::{self, Read, Write};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 use std::pin::{Pin, pin};
 
@@ -37,6 +37,18 @@ struct Reloader {
 struct PreExecEntry {
     name: &'static str,
     fd: OwnedFd,
+}
+
+// Everything the re-executed service is started with, prepared before forking.
+struct Reexec {
+    exe: CString,
+    argv: Vec<*const c_char>,
+    envp: Vec<*const c_char>,
+    // Own the strings `argv` and `envp` point to.
+    _args: Vec<CString>,
+    _env: Vec<CString>,
+    journal_identifier: OsString,
+    fds: Vec<OwnedFd>,
 }
 
 impl Reloader {
@@ -75,42 +87,34 @@ impl Reloader {
         Ok(res)
     }
 
-    fn pre_exec(self) -> Result<(), Error> {
-        for item in self.pre_exec {
-            fd_change_cloexec(item.fd.as_raw_fd(), false)?;
-            unsafe { std::env::set_var(item.name, item.fd.into_raw_fd().to_string()) };
-        }
-        Ok(())
-    }
+    fn prepare_reexec(self) -> Result<Reexec, Error> {
+        let args = std::env::args_os()
+            .map(|arg| CString::new(arg.into_vec()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let stored: Vec<(&str, RawFd)> = self
+            .pre_exec
+            .iter()
+            .map(|entry| (entry.name, entry.fd.as_raw_fd()))
+            .collect();
+        let env = reexec_env(std::env::vars_os(), &stored)?;
 
-    fn redirect_journal_fd(&self, priority: libc::c_int, target: RawFd) -> Result<(), Error> {
-        match proxmox_systemd::journal::stream_fd(
-            self.self_exe.file_name().unwrap(),
-            priority,
-            true,
-        ) {
-            Ok(fd) => {
-                if fd.as_raw_fd() == target {
-                    std::mem::forget(fd);
-                } else {
-                    nix::unistd::dup2(fd.as_raw_fd(), target)?;
-                }
-            }
-            Err(err) => {
-                log::error!("failed to update STDOUT journal redirection ({})", err);
-            }
-        }
-
-        Ok(())
+        Ok(Reexec {
+            exe: CString::new(self.self_exe.as_os_str().as_bytes())?,
+            argv: null_terminated(&args),
+            envp: null_terminated(&env),
+            _args: args,
+            _env: env,
+            journal_identifier: self.self_exe.file_name().unwrap_or_default().to_owned(),
+            fds: self.pre_exec.into_iter().map(|entry| entry.fd).collect(),
+        })
     }
 
     pub fn fork_restart(self, pid_fn: Option<&str>) -> Result<(), Error> {
-        // Get our parameters as Vec<CString>
-        let args = std::env::args_os();
-        let mut new_args = Vec::with_capacity(args.len());
-        for arg in args {
-            new_args.push(CString::new(arg.as_bytes())?);
-        }
+        // A process forked from a multi-threaded one inherits the locks other threads held at that
+        // moment, with nobody left to release them. Rust's std, for example, holds its environment
+        // lock while spawning a process, and a logger may hold its own. So prepare everything the
+        // new server needs before forking.
+        let reexec = self.prepare_reexec()?;
 
         // Synchronisation pipe:
         let (pold, pnew) = socketpair()?;
@@ -118,51 +122,12 @@ impl Reloader {
         // Start ourselves in the background:
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
+                std::mem::drop(pold);
                 // Double fork so systemd can supervise us without nagging...
                 match unsafe { fork() } {
-                    Ok(ForkResult::Child) => {
-                        std::mem::drop(pold);
-                        // At this point we call pre-exec helpers. We must be certain that if they fail for
-                        // whatever reason we can still call `_exit()`, so use catch_unwind.
-                        let perform_reexec = move || {
-                            let mut pnew = std::fs::File::from(pnew);
-                            let pid = nix::unistd::Pid::this();
-                            if let Err(e) = pnew.write_all(&pid.as_raw().to_ne_bytes()) {
-                                log::error!("failed to send new server PID to parent: {}", e);
-                                unsafe {
-                                    libc::_exit(-1);
-                                }
-                            }
-
-                            let mut ok = [0u8];
-                            if let Err(e) = pnew.read_exact(&mut ok) {
-                                log::error!("parent vanished before notifying systemd: {}", e);
-                                unsafe {
-                                    libc::_exit(-1);
-                                }
-                            }
-                            assert_eq!(ok[0], 1, "reload handshake should have sent a 1 byte");
-
-                            std::mem::drop(pnew);
-
-                            // Try to reopen STDOUT/STDERR journald streams to get correct PID in logs
-                            self.redirect_journal_fd(libc::LOG_INFO, 1)?;
-                            self.redirect_journal_fd(libc::LOG_ERR, 2)?;
-
-                            self.do_reexec(new_args)
-                        };
-
-                        match std::panic::catch_unwind(perform_reexec) {
-                            Ok(Ok(())) => log::error!("do_reexec returned!"),
-                            Ok(Err(err)) => log::error!("do_reexec failed: {}", err),
-                            Err(_) => log::error!("panic in re-exec"),
-                        }
-                    }
-                    Ok(ForkResult::Parent { child }) => {
-                        std::mem::drop((pold, pnew));
-                        log::debug!("forked off a new server (second pid: {})", child);
-                    }
-                    Err(e) => log::error!("fork() failed, restart delayed: {}", e),
+                    Ok(ForkResult::Child) => reexec.run(pnew),
+                    Ok(ForkResult::Parent { .. }) => (),
+                    Err(_) => write_stderr(b"fork() failed, restart delayed\n"),
                 }
                 // No matter how we managed to get here, this is the time where we bail out quickly:
                 unsafe { libc::_exit(-1) }
@@ -227,15 +192,92 @@ impl Reloader {
             }
         }
     }
+}
 
-    fn do_reexec(self, args: Vec<CString>) -> Result<(), Error> {
-        let exe = CString::new(self.self_exe.as_os_str().as_bytes())?;
-        self.pre_exec()?;
-        nix::unistd::setsid()?;
-        let args: Vec<&std::ffi::CStr> = args.iter().map(|s| s.as_ref()).collect();
-        nix::unistd::execvp(&exe, &args)?;
-        panic!("exec misbehaved");
+impl Reexec {
+    // Runs in a process forked from a possibly multi-threaded one, so it must not log, panic or use
+    // std::env, all of which can wait for locks that another thread held at the fork.
+    fn run(&self, channel: OwnedFd) -> ! {
+        let mut channel = std::fs::File::from(channel);
+        let pid = nix::unistd::Pid::this();
+        if channel.write_all(&pid.as_raw().to_ne_bytes()).is_err() {
+            exit_child(b"failed to send new server PID to parent\n");
+        }
+
+        let mut ok = [0u8];
+        if channel.read_exact(&mut ok).is_err() || ok[0] != 1 {
+            exit_child(b"parent vanished before notifying systemd\n");
+        }
+
+        std::mem::drop(channel);
+
+        // Try to reopen STDOUT/STDERR journald streams to get correct PID in logs
+        self.redirect_journal_fd(libc::LOG_INFO, 1);
+        self.redirect_journal_fd(libc::LOG_ERR, 2);
+
+        for fd in &self.fds {
+            if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, 0) } == -1 {
+                exit_child(b"failed to pass on descriptor to new server\n");
+            }
+        }
+        if unsafe { libc::setsid() } == -1 {
+            exit_child(b"failed to create session for new server\n");
+        }
+        unsafe { libc::execve(self.exe.as_ptr(), self.argv.as_ptr(), self.envp.as_ptr()) };
+        exit_child(b"failed to execute new server\n");
     }
+
+    fn redirect_journal_fd(&self, priority: libc::c_int, target: RawFd) {
+        match proxmox_systemd::journal::stream_fd(&self.journal_identifier, priority, true) {
+            Ok(fd) => {
+                if fd.as_raw_fd() == target {
+                    std::mem::forget(fd);
+                } else if unsafe { libc::dup2(fd.as_raw_fd(), target) } == -1 {
+                    exit_child(b"failed to redirect output to the journal\n");
+                }
+            }
+            Err(_) => write_stderr(b"failed to update journal redirection\n"),
+        }
+    }
+}
+
+fn write_stderr(message: &[u8]) {
+    unsafe { libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len()) };
+}
+
+fn exit_child(message: &[u8]) -> ! {
+    write_stderr(message);
+    unsafe { libc::_exit(-1) }
+}
+
+/// The environment for the re-executed service: the current one, with the variables of the stored
+/// descriptors set to their numbers.
+fn reexec_env<I>(current: I, stored: &[(&str, RawFd)]) -> Result<Vec<CString>, Error>
+where
+    I: IntoIterator<Item = (OsString, OsString)>,
+{
+    let mut env = Vec::new();
+    for (name, value) in current {
+        if stored.iter().any(|(stored, _)| name == **stored) {
+            continue;
+        }
+        let mut entry = name.into_vec();
+        entry.push(b'=');
+        entry.extend_from_slice(value.as_bytes());
+        env.push(CString::new(entry)?);
+    }
+    for (name, fd) in stored {
+        env.push(CString::new(format!("{name}={fd}"))?);
+    }
+    Ok(env)
+}
+
+fn null_terminated(strings: &[CString]) -> Vec<*const c_char> {
+    strings
+        .iter()
+        .map(|string| string.as_ptr())
+        .chain(std::iter::once(std::ptr::null()))
+        .collect()
 }
 
 fn fd_store_dup(fd: RawFd) -> Result<OwnedFd, Error> {
@@ -396,4 +438,42 @@ fn socketpair() -> Result<(OwnedFd, OwnedFd), Error> {
         None,
         socket::SockFlag::SOCK_CLOEXEC,
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::{CStr, OsString};
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn reexec_env_sets_stored_descriptors() {
+        let var = |name: &str, value: &[u8]| (name.into(), OsString::from_vec(value.to_vec()));
+        let current = vec![
+            var("PATH", b"/usr/sbin:/usr/bin"),
+            var("PROXMOX_BACKUP_LISTEN_FD", b"3"),
+            var("RAW", b"\xff=x"),
+            var("EMPTY", b""),
+        ];
+        let env = super::reexec_env(current, &[("PROXMOX_BACKUP_LISTEN_FD", 7)]).unwrap();
+        let env: Vec<&[u8]> = env.iter().map(|entry| entry.as_bytes()).collect();
+        assert_eq!(
+            env,
+            [
+                &b"PATH=/usr/sbin:/usr/bin"[..],
+                b"RAW=\xff=x",
+                b"EMPTY=",
+                b"PROXMOX_BACKUP_LISTEN_FD=7",
+            ]
+        );
+    }
+
+    #[test]
+    fn null_terminated_points_to_strings() {
+        let strings = vec![c"a".to_owned(), c"bc".to_owned()];
+        let pointers = super::null_terminated(&strings);
+        assert_eq!(pointers.len(), 3);
+        assert_eq!(unsafe { CStr::from_ptr(pointers[0]) }, c"a");
+        assert_eq!(unsafe { CStr::from_ptr(pointers[1]) }, c"bc");
+        assert!(pointers[2].is_null());
+    }
 }
