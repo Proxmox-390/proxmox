@@ -27,12 +27,23 @@ impl SystemdNotify {
     fn message(self) -> Result<CString, io::Error> {
         Ok(match self {
             SystemdNotify::Ready => c"READY=1".into(),
-            SystemdNotify::Reloading => c"RELOADING=1".into(),
+            // Type=notify-reload services must send it with the time they began reloading.
+            SystemdNotify::Reloading => {
+                CString::new(format!("RELOADING=1\nMONOTONIC_USEC={}", monotonic_usec()?))?
+            }
             SystemdNotify::Stopping => c"STOPPING=1".into(),
             SystemdNotify::Status(msg) => CString::new(format!("STATUS={msg}"))?,
             SystemdNotify::MainPid(pid) => CString::new(format!("MAINPID={pid}"))?,
         })
     }
+}
+
+fn monotonic_usec() -> Result<u64, io::Error> {
+    let mut now: libc::timespec = unsafe { std::mem::zeroed() };
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(now.tv_sec as u64 * 1_000_000 + now.tv_nsec as u64 / 1_000)
 }
 
 /// Waits until all previously sent messages with sd_notify are processed
@@ -123,6 +134,24 @@ impl Iterator for ListenFdNames {
 #[cfg(test)]
 mod tests {
     use super::SystemdNotify;
+
+    #[test]
+    fn reloading_carries_the_monotonic_time() {
+        let before = super::monotonic_usec().unwrap();
+        let message = SystemdNotify::Reloading.message().unwrap();
+        let after = super::monotonic_usec().unwrap();
+        let time = message
+            .to_str()
+            .unwrap()
+            .strip_prefix("RELOADING=1\nMONOTONIC_USEC=")
+            .expect("RELOADING=1 without MONOTONIC_USEC=")
+            .parse::<u64>()
+            .unwrap();
+        assert!(
+            (before..=after).contains(&time),
+            "{before} <= {time} <= {after}"
+        );
+    }
 
     #[test]
     fn status_is_sent_as_status_field() {
