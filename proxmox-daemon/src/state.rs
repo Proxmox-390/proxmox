@@ -1,36 +1,62 @@
 use std::future::Future;
 use std::pin::pin;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use anyhow::{Error, bail};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 
 static SHUTDOWN_LISTENERS: OnceLock<watch::Sender<bool>> = OnceLock::new();
-static RELOAD_REQUESTED: AtomicBool = AtomicBool::new(false);
+// Whichever of a reload and a shutdown request came first decides for good whether the daemon
+// reloads, so that a service can rely on what it saw when its shutdown began.
+static RELOAD_OR_STOP: AtomicU8 = AtomicU8::new(UNDECIDED);
+const UNDECIDED: u8 = 0;
+const RELOAD: u8 = 1;
+const STOP: u8 = 2;
+// Set by a shutdown signal also after a reload request, to pass the stop on to the new server.
+static STOP_LATCHED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Request a reload.
 ///
-/// This sets the reload flag and subsequently calls [`request_shutdown()`].
+/// Unless a shutdown was requested first, this sets the reload flag and subsequently calls
+/// [`request_shutdown()`].
 pub fn request_reload() {
-    if !RELOAD_REQUESTED.swap(true, Ordering::Release) {
+    if RELOAD_OR_STOP
+        .compare_exchange(UNDECIDED, RELOAD, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
         request_shutdown();
     }
 }
 
 /// Returns true if a reload has been requested either via a signal or a call to
-/// [`request_reload()`].
+/// [`request_reload()`] before any shutdown request. Once true, this stays true.
 pub fn is_reload_requested() -> bool {
-    RELOAD_REQUESTED.load(Ordering::Acquire)
+    RELOAD_OR_STOP.load(Ordering::Acquire) == RELOAD
+}
+
+// Records a shutdown signal, or a stop passed on by the reload that started this process. Only
+// uses lock-free atomics, so a signal handler can call it.
+pub(crate) fn latch_stop() {
+    STOP_LATCHED.store(true, Ordering::Release);
+    let _ = RELOAD_OR_STOP.compare_exchange(UNDECIDED, STOP, Ordering::AcqRel, Ordering::Acquire);
+}
+
+/// Whether a stop was latched, also after a reload request.
+pub(crate) fn is_stop_latched() -> bool {
+    STOP_LATCHED.load(Ordering::Acquire)
 }
 
 /// Request a shutdown.
 ///
-/// This sets both the shutdown flag and triggers [`shutdown_future()`] to finish.
+/// This sets both the shutdown flag and triggers [`shutdown_future()`] to finish. Unless a reload
+/// was requested before, this also rules out a reload for good.
 pub fn request_shutdown() {
     log::info!("request_shutdown");
+
+    let _ = RELOAD_OR_STOP.compare_exchange(UNDECIDED, STOP, Ordering::AcqRel, Ordering::Acquire);
 
     if !SHUTDOWN_REQUESTED.swap(true, Ordering::Release) {
         // Unlike send(), this also keeps the value without a receiver, for any shutdown_future()
@@ -66,18 +92,28 @@ where
     futures::future::select(a, b).await;
 }
 
-/// Creates a task which listens for a `SIGINT` and then calls [`request_shutdown()`] while also
-/// *undoing* a previous *reload* request.
+/// Creates a task which listens for a `SIGINT` and then calls [`request_shutdown()`]. A signal
+/// before any *reload* request rules out a reload for good. One during a reload is passed on to
+/// the new server, which then stops right after it started.
 pub fn shutdown_signal_task() -> Result<impl Future<Output = ()> + Send + 'static, Error> {
     let mut stream = signal(SignalKind::interrupt())?;
+    latch_stop_on(libc::SIGINT)?;
 
     Ok(async move {
         while stream.recv().await.is_some() {
             log::info!("got shutdown request (SIGINT)");
-            RELOAD_REQUESTED.store(false, Ordering::Release);
             request_shutdown();
         }
     })
+}
+
+// Latches the stop right in the signal handler. A reload waits for the service manager in
+// blocking calls, which the signal interrupts if it arrives in the same thread, and then decides
+// what to tell the new server, possibly before the signal task ran.
+fn latch_stop_on(signal: libc::c_int) -> Result<(), Error> {
+    // SAFETY: latch_stop() only uses lock-free atomics, which is async-signal-safe.
+    unsafe { signal_hook_registry::register(signal, latch_stop)? };
+    Ok(())
 }
 
 /// Spawn a [`shutdown_signal_task()`] which is automatically aborted with the provided

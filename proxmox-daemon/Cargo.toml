@@ -20,7 +20,11 @@ log.workspace = true
 nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+signal-hook-registry.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "rt", "signal", "sync"] }
 
 proxmox-sys.workspace = true
 proxmox-systemd.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "time"] }

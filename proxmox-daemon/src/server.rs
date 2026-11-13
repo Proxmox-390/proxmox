@@ -44,12 +44,31 @@ struct Reexec {
     exe: CString,
     argv: Vec<*const c_char>,
     envp: Vec<*const c_char>,
-    // Own the strings `argv` and `envp` point to.
+    // `envp` with the stop marker, for passing on a stop that arrived during the reload.
+    envp_stop: Vec<*const c_char>,
+    // Own the strings `argv`, `envp` and `envp_stop` point to.
     _args: Vec<CString>,
     _env: Vec<CString>,
     journal_identifier: OsString,
     fds: Vec<OwnedFd>,
 }
+
+// A forked new server, which waits for the acknowledgement on `channel` before it executes itself.
+struct Successor {
+    pid: nix::unistd::Pid,
+    channel: std::fs::File,
+}
+
+// The acknowledgement that lets the new server go on, and the one that also tells it to stop.
+const HANDOVER: u8 = 1;
+const HANDOVER_STOP: u8 = 2;
+
+/// Set in the environment of a new server to make it stop right after it started, as a stop
+/// arrived during the reload that started it.
+const STOP_ENV: &str = "PROXMOX_DAEMON_STOP";
+
+// The signals that ask a daemon to shut down.
+const SHUTDOWN_SIGNALS: [libc::c_int; 2] = [libc::SIGTERM, libc::SIGINT];
 
 impl Reloader {
     pub fn new() -> Result<Self, Error> {
@@ -98,15 +117,13 @@ impl Reloader {
             .collect();
         let env = reexec_env(std::env::vars_os(), &stored)?;
 
-        Ok(Reexec {
-            exe: CString::new(self.self_exe.as_os_str().as_bytes())?,
-            argv: null_terminated(&args),
-            envp: null_terminated(&env),
-            _args: args,
-            _env: env,
-            journal_identifier: self.self_exe.file_name().unwrap_or_default().to_owned(),
-            fds: self.pre_exec.into_iter().map(|entry| entry.fd).collect(),
-        })
+        Reexec::new(
+            CString::new(self.self_exe.as_os_str().as_bytes())?,
+            args,
+            env,
+            self.self_exe.file_name().unwrap_or_default().to_owned(),
+            self.pre_exec.into_iter().map(|entry| entry.fd).collect(),
+        )
     }
 
     pub fn fork_restart(self, pid_fn: Option<&str>) -> Result<(), Error> {
@@ -115,17 +132,95 @@ impl Reloader {
         // lock while spawning a process, and a logger may hold its own. So prepare everything the
         // new server needs before forking.
         let reexec = self.prepare_reexec()?;
+        let Some(mut successor) = reexec.fork_successor()? else {
+            return Ok(());
+        };
 
+        if let Some(pid_fn) = pid_fn {
+            let pid_str = format!("{}\n", successor.pid);
+            proxmox_sys::fs::replace_file(pid_fn, pid_str.as_bytes(), CreateOptions::new(), false)?;
+        }
+
+        if let Err(e) =
+            proxmox_systemd::notify::SystemdNotify::MainPid(successor.pid.into()).notify()
+        {
+            log::error!("failed to notify systemd about the new main pid: {}", e);
+        }
+        // ensure systemd got the message about the new main PID before continuing, else it
+        // will get confused if the new main process sends its READY signal before that
+        if let Err(e) = wait_for_systemd() {
+            log::error!("failed to wait on systemd-processing: {}", e);
+        }
+
+        // The service manager may have sent a stop during the reload to the old main process
+        // only, so pass it on.
+        let stop = crate::state::is_stop_latched();
+        if stop {
+            log::info!("passing on a stop request to the new server");
+        }
+        // notify child that it is now the new main process:
+        if let Err(e) = successor.hand_over(stop) {
+            log::error!("child vanished during reload: {}", e);
+        }
+
+        Ok(())
+    }
+}
+
+impl Successor {
+    fn hand_over(&mut self, stop: bool) -> io::Result<()> {
+        self.channel
+            .write_all(&[if stop { HANDOVER_STOP } else { HANDOVER }])
+    }
+}
+
+impl Reexec {
+    fn new(
+        exe: CString,
+        args: Vec<CString>,
+        mut env: Vec<CString>,
+        journal_identifier: OsString,
+        fds: Vec<OwnedFd>,
+    ) -> Result<Self, Error> {
+        let argv = null_terminated(&args);
+        let envp = null_terminated(&env);
+        // Growing the vector moves the CString handles, but not the string data `envp` points to.
+        env.push(CString::new(format!("{STOP_ENV}=1"))?);
+        let envp_stop = null_terminated(&env);
+        Ok(Self {
+            exe,
+            argv,
+            envp,
+            envp_stop,
+            _args: args,
+            _env: env,
+            journal_identifier,
+            fds,
+        })
+    }
+
+    /// Forks off the new server through an intermediate process, so that it gets reparented to
+    /// the service manager, and receives its PID. Returns `None` if that failed, after logging why.
+    fn fork_successor(&self) -> Result<Option<Successor>, Error> {
         // Synchronisation pipe:
         let (pold, pnew) = socketpair()?;
 
-        // Start ourselves in the background:
-        match unsafe { fork() } {
+        // Fork with shutdown signals blocked, which the new server keeps until the handover is
+        // done, see run().
+        let signal_mask = set_signal_mask(libc::SIG_BLOCK, &shutdown_signal_set())?;
+        let forked = unsafe { fork() };
+        if !matches!(forked, Ok(ForkResult::Child))
+            && let Err(err) = set_signal_mask(libc::SIG_SETMASK, &signal_mask)
+        {
+            log::error!("failed to restore signal mask after fork: {err}");
+        }
+
+        match forked {
             Ok(ForkResult::Child) => {
                 std::mem::drop(pold);
                 // Double fork so systemd can supervise us without nagging...
                 match unsafe { fork() } {
-                    Ok(ForkResult::Child) => reexec.run(pnew),
+                    Ok(ForkResult::Child) => self.run(pnew, &signal_mask),
                     Ok(ForkResult::Parent { .. }) => (),
                     Err(_) => write_stderr(b"fork() failed, restart delayed\n"),
                 }
@@ -139,77 +234,63 @@ impl Reloader {
                 );
                 std::mem::drop(pnew);
                 // Reap the intermediate process first, so that the new server is already
-                // reparented to the service manager when it learns the new main PID below. systemd
+                // reparented to the service manager before that learns the new main PID. systemd
                 // supervises a new main process as its own child only if it is one at that moment.
                 if let Err(err) = nix::sys::wait::waitpid(child, None) {
                     log::error!("failed to reap intermediate reload process: {err}");
                 }
-                let mut pold = std::fs::File::from(pold);
+                let mut channel = std::fs::File::from(pold);
                 let mut child_pid = (0 as libc::pid_t).to_ne_bytes();
-                let child = nix::unistd::Pid::from_raw(match pold.read_exact(&mut child_pid) {
-                    Ok(()) => libc::pid_t::from_ne_bytes(child_pid),
+                match channel.read_exact(&mut child_pid) {
+                    Ok(()) => Ok(Some(Successor {
+                        pid: nix::unistd::Pid::from_raw(libc::pid_t::from_ne_bytes(child_pid)),
+                        channel,
+                    })),
                     Err(e) => {
                         log::error!(
                             "failed to receive pid of double-forked child process: {}",
                             e
                         );
                         // systemd will complain but won't kill the service...
-                        return Ok(());
+                        Ok(None)
                     }
-                });
-
-                if let Some(pid_fn) = pid_fn {
-                    let pid_str = format!("{child}\n");
-                    proxmox_sys::fs::replace_file(
-                        pid_fn,
-                        pid_str.as_bytes(),
-                        CreateOptions::new(),
-                        false,
-                    )?;
                 }
-
-                if let Err(e) =
-                    proxmox_systemd::notify::SystemdNotify::MainPid(child.into()).notify()
-                {
-                    log::error!("failed to notify systemd about the new main pid: {}", e);
-                }
-                // ensure systemd got the message about the new main PID before continuing, else it
-                // will get confused if the new main process sends its READY signal before that
-                if let Err(e) = wait_for_systemd() {
-                    log::error!("failed to wait on systemd-processing: {}", e);
-                }
-
-                // notify child that it is now the new main process:
-                if let Err(e) = pold.write_all(&[1u8]) {
-                    log::error!("child vanished during reload: {}", e);
-                }
-
-                Ok(())
             }
             Err(e) => {
                 log::error!("fork() failed, restart delayed: {}", e);
-                Ok(())
+                Ok(None)
             }
         }
     }
-}
 
-impl Reexec {
     // Runs in a process forked from a possibly multi-threaded one, so it must not log, panic or use
     // std::env, all of which can wait for locks that another thread held at the fork.
-    fn run(&self, channel: OwnedFd) -> ! {
+    fn run(&self, channel: OwnedFd, signal_mask: &libc::sigset_t) -> ! {
+        // Shutdown signals stay blocked until the handover is done, as the inherited handlers would
+        // swallow them, with nothing polling their Tokio streams here. One that arrived meanwhile
+        // counts like a stop passed on by the old server, so the new one stops once it took over.
         let mut channel = std::fs::File::from(channel);
         let pid = nix::unistd::Pid::this();
         if channel.write_all(&pid.as_raw().to_ne_bytes()).is_err() {
             exit_child(b"failed to send new server PID to parent\n");
         }
 
-        let mut ok = [0u8];
-        if channel.read_exact(&mut ok).is_err() || ok[0] != 1 {
+        let mut handover = [0u8];
+        if channel.read_exact(&mut handover).is_err()
+            || !matches!(handover[0], HANDOVER | HANDOVER_STOP)
+        {
             exit_child(b"parent vanished before notifying systemd\n");
         }
 
         std::mem::drop(channel);
+
+        let stop = match take_shutdown_signals() {
+            Ok(pending) => pending || handover[0] == HANDOVER_STOP,
+            Err(_) => exit_child(b"failed to reset signal handlers\n"),
+        };
+        if set_signal_mask(libc::SIG_SETMASK, signal_mask).is_err() {
+            exit_child(b"failed to restore signal mask\n");
+        }
 
         // Try to reopen STDOUT/STDERR journald streams to get correct PID in logs
         self.redirect_journal_fd(libc::LOG_INFO, 1);
@@ -223,7 +304,8 @@ impl Reexec {
         if unsafe { libc::setsid() } == -1 {
             exit_child(b"failed to create session for new server\n");
         }
-        unsafe { libc::execve(self.exe.as_ptr(), self.argv.as_ptr(), self.envp.as_ptr()) };
+        let envp = if stop { &self.envp_stop } else { &self.envp };
+        unsafe { libc::execve(self.exe.as_ptr(), self.argv.as_ptr(), envp.as_ptr()) };
         exit_child(b"failed to execute new server\n");
     }
 
@@ -250,15 +332,76 @@ fn exit_child(message: &[u8]) -> ! {
     unsafe { libc::_exit(-1) }
 }
 
-/// The environment for the re-executed service: the current one, with the variables of the stored
-/// descriptors set to their numbers.
+fn shutdown_signal_set() -> libc::sigset_t {
+    let mut set = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigemptyset(&mut set) };
+    for signal in SHUTDOWN_SIGNALS {
+        unsafe { libc::sigaddset(&mut set, signal) };
+    }
+    set
+}
+
+/// Changes the signal mask of the calling thread and returns the previous one.
+fn set_signal_mask(how: libc::c_int, set: &libc::sigset_t) -> io::Result<libc::sigset_t> {
+    let mut previous = unsafe { std::mem::zeroed() };
+    match unsafe { libc::pthread_sigmask(how, set, &mut previous) } {
+        0 => Ok(previous),
+        err => Err(io::Error::from_raw_os_error(err)),
+    }
+}
+
+/// Resets the blocked shutdown signals to their default action like exec does, keeping an ignored
+/// one ignored, and discards pending ones. Returns whether one was pending.
+fn take_shutdown_signals() -> io::Result<bool> {
+    // Reset before looking for pending ones, so that one arriving in between either gets counted or
+    // stays pending for its default action.
+    let mut reset = [false; SHUTDOWN_SIGNALS.len()];
+    for (signal, reset) in SHUTDOWN_SIGNALS.into_iter().zip(&mut reset) {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        if unsafe { libc::sigaction(signal, std::ptr::null(), &mut action) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        if action.sa_sigaction != libc::SIG_IGN {
+            set_signal_action(signal, libc::SIG_DFL)?;
+            *reset = true;
+        }
+    }
+
+    let mut pending: libc::sigset_t = unsafe { std::mem::zeroed() };
+    if unsafe { libc::sigpending(&mut pending) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut was_pending = false;
+    for (signal, reset) in SHUTDOWN_SIGNALS.into_iter().zip(reset) {
+        if reset && unsafe { libc::sigismember(&pending, signal) } == 1 {
+            was_pending = true;
+            // Ignoring a signal discards a pending one.
+            set_signal_action(signal, libc::SIG_IGN)?;
+            set_signal_action(signal, libc::SIG_DFL)?;
+        }
+    }
+    Ok(was_pending)
+}
+
+fn set_signal_action(signal: libc::c_int, handler: libc::sighandler_t) -> io::Result<()> {
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = handler;
+    unsafe { libc::sigemptyset(&mut action.sa_mask) };
+    if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// The environment for the re-executed service: the current one without a stop marker, with the
+/// variables of the stored descriptors set to their numbers.
 fn reexec_env<I>(current: I, stored: &[(&str, RawFd)]) -> Result<Vec<CString>, Error>
 where
     I: IntoIterator<Item = (OsString, OsString)>,
 {
     let mut env = Vec::new();
     for (name, value) in current {
-        if stored.iter().any(|(stored, _)| name == **stored) {
+        if name == STOP_ENV || stored.iter().any(|(stored, _)| name == **stored) {
             continue;
         }
         let mut entry = name.into_vec();
@@ -373,6 +516,12 @@ where
     F: FnOnce(L) -> Result<S, Error>,
     S: Future<Output = Result<(), Error>>,
 {
+    if std::env::var_os(STOP_ENV).is_some() {
+        log::info!("stopping as requested during the reload that started this server");
+        crate::state::latch_stop();
+        crate::request_shutdown();
+    }
+
     let mut reloader = Reloader::new()?;
 
     let listener: L = reloader
@@ -454,14 +603,18 @@ fn socketpair() -> Result<(OwnedFd, OwnedFd), Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::{CStr, OsString};
+    use std::ffi::{CStr, CString, OsString};
+    use std::io::Read;
     use std::os::unix::ffi::OsStringExt;
     use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixDatagram;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
-    // Serializes the tests that change or depend on process-wide state, like the environment.
+    use tokio::signal::unix::SignalKind;
+
+    // Serializes the tests that change or depend on process-wide state, like the environment, and
+    // those whose sockets a forked process would keep open.
     static PROCESS_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -470,6 +623,7 @@ mod tests {
         let current = vec![
             var("PATH", b"/usr/sbin:/usr/bin"),
             var("PROXMOX_BACKUP_LISTEN_FD", b"3"),
+            var("PROXMOX_DAEMON_STOP", b"1"),
             var("RAW", b"\xff=x"),
             var("EMPTY", b""),
         ];
@@ -618,6 +772,91 @@ mod tests {
                 return;
             }
             std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn new_server_stops_if_told_by_the_handover_or_a_pending_signal() {
+        let _lock = PROCESS_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        // Adopt the new server once its intermediate parent exits, to wait for it.
+        assert_eq!(
+            unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1 as libc::c_ulong) },
+            0
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
+        // Handlers as daemons install them, which the forked new server inherits.
+        let _handlers = runtime.block_on(async {
+            [SignalKind::terminate(), SignalKind::interrupt()]
+                .map(|kind| tokio::signal::unix::signal(kind).unwrap())
+        });
+
+        let cases = [
+            (None, false, "unset"),
+            (None, true, "1"),
+            (Some(libc::SIGTERM), false, "1"),
+            (Some(libc::SIGINT), false, "1"),
+        ];
+        for (signal, stop, expected) in cases {
+            let (mut report, reported_by_child) = std::io::pipe().unwrap();
+            // Through /proc, as the shell may support only single-digit descriptor numbers.
+            let script = format!(
+                "printf %s \"${{{}-unset}}\" >/proc/self/fd/{}",
+                super::STOP_ENV,
+                reported_by_child.as_raw_fd()
+            );
+            let reexec = super::Reexec::new(
+                c"/bin/sh".to_owned(),
+                vec![
+                    c"sh".to_owned(),
+                    c"-c".to_owned(),
+                    CString::new(script).unwrap(),
+                ],
+                Vec::new(),
+                "proxmox-daemon-test".into(),
+                vec![reported_by_child.into()],
+            )
+            .unwrap();
+
+            let mut successor = reexec.fork_successor().unwrap().expect("no new server");
+            let pid = successor.pid.as_raw();
+            if let Some(signal) = signal {
+                assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
+            }
+            successor.hand_over(stop).unwrap();
+            drop(reexec);
+
+            let status = wait_for_exit(pid);
+            let mut reported = String::new();
+            report.read_to_string(&mut reported).unwrap();
+            let case = format!("signal {signal:?}, stop acknowledged: {stop}");
+            assert_eq!(reported, expected, "{case}: status {status:#x}");
+            assert!(
+                libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+                "{case}: status {status:#x}"
+            );
+        }
+    }
+
+    // Kills the child if it does not exit in time, so that a failure does not hang.
+    fn wait_for_exit(pid: libc::pid_t) -> libc::c_int {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut status = 0;
+        loop {
+            match unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } {
+                0 if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                0 => {
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                    unsafe { libc::waitpid(pid, &mut status, 0) };
+                    return status;
+                }
+                res => {
+                    assert_eq!(res, pid, "{}", std::io::Error::last_os_error());
+                    return status;
+                }
+            }
         }
     }
 }
