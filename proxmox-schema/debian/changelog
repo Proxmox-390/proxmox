@@ -1,3 +1,20 @@
+rust-proxmox-schema (5.7.0-1) trixie; urgency=medium
+
+  * property string: expose the value quoting rules as public quote_string
+    and parse_quoted_value helpers, so config-file formats can store a
+    multi-line value on a single line.
+
+  * string schema: add an opt-in multiline flag for string values that may
+    contain newlines; the config-file crates store flagged values as a
+    quoted and escaped single line.
+
+  * string schema: add an opt-in sensitive flag that marks secrets like
+    passwords or API tokens, so generic code can redact them from reports
+    or mask them in API output; purely declarative, validation and storage
+    are unaffected.
+
+ -- Proxmox Support Team <support@proxmox.com>  Sun, 15 Nov 2026 20:40:32 +0100
+
 rust-proxmox-schema (5.6.0-1) trixie; urgency=medium
 
   * api types: add a format for non-empty strings without any whitespace.
