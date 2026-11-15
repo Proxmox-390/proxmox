@@ -1,3 +1,12 @@
+rust-pbs-api-types (1.0.23-1) trixie; urgency=medium
+
+  * datastore: allow multi-line comments with up to 8192 characters, so a
+    comment can hold notes about the stored data or the retention policy.
+    Listing types keep the single-line comment schema, as tabular views
+    only have room for a one-line caption.
+
+ -- Proxmox Support Team <support@proxmox.com>  Sun, 15 Nov 2026 20:41:30 +0100
+
 rust-pbs-api-types (1.0.22-1) trixie; urgency=medium
 
   * zfs: add a schema with verification for the ZFS recordsize, accepting
