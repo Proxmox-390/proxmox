@@ -1,3 +1,13 @@
+rust-proxmox-section-config (3.4.0-1) trixie; urgency=medium
+
+  * support multi-line values for keys whose string schema sets the new
+    multiline flag. Such values are written as a quoted and escaped single
+    line and decoded again on parsing. All other values stay bare and a
+    quoted value that does not decode cleanly is kept literal, so existing
+    configuration files keep their meaning.
+
+ -- Proxmox Support Team <support@proxmox.com>  Sun, 15 Nov 2026 20:40:55 +0100
+
 rust-proxmox-section-config (3.3.0-1) trixie; urgency=medium
 
   * support oneOf plugin schemas. A section's properties are parsed once its
