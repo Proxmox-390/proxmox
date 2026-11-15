@@ -1,3 +1,13 @@
+rust-proxmox-simple-config (1.2.0-1) trixie; urgency=medium
+
+  * support multi-line values for keys whose string schema sets the new
+    multiline flag, stored as a quoted and escaped single line like in the
+    section-config format. All other values stay bare and a quoted value
+    that does not decode cleanly is kept literal, so existing files keep
+    their meaning.
+
+ -- Proxmox Support Team <support@proxmox.com>  Sun, 15 Nov 2026 20:41:12 +0100
+
 rust-proxmox-simple-config (1.1.0-1) trixie; urgency=medium
 
   * support oneOf schemas, where the type property selects the schema of a
