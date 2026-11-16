@@ -1128,6 +1128,9 @@ my sub string_type : prototype($$$$) {
     if (delete $schema->{sensitive}) {
         $api_props->{sensitive} = true;
     }
+    if (delete $schema->{multiline}) {
+        $api_props->{multiline} = true;
+    }
 
     # pub enum ApiStringFormat {
     #     /// Enumerate all valid strings
