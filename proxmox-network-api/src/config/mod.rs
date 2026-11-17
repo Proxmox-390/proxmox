@@ -3,7 +3,8 @@ mod lexer;
 mod parser;
 
 pub use helper::{
-    AltnameMapping, IpLink, LinkInfo, assert_ifupdown2_installed, network_reload, parse_cidr,
+    AltnameMapping, IpLink, LinkFlag, LinkInfo, assert_ifupdown2_installed, network_reload,
+    parse_cidr,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};

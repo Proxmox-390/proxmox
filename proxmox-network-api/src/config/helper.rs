@@ -174,6 +174,24 @@ pub enum Link {
     Unknown(UnknownLink),
 }
 
+/// A flag of a link, as listed in the `flags` field of `ip -details -json link show`.
+///
+/// Flags without a dedicated variant are kept as [`LinkFlag::Unknown`].
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LinkFlag {
+    Pointopoint,
+    Noarp,
+    Up,
+    LowerUp,
+    Broadcast,
+    Multicast,
+    Loopback,
+    Promisc,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
 /// An IpLink entry, as returned by `ip -details -json link show`.
 ///
 /// For now this parses only the fields that are used throughout our stack, the fields of this
@@ -189,6 +207,8 @@ pub struct IpLink {
     link_type: Link,
     linkinfo: Option<LinkInfo>,
     operstate: String,
+    #[serde(default)]
+    flags: Vec<LinkFlag>,
 }
 
 impl IpLink {
@@ -256,6 +276,11 @@ impl IpLink {
     /// Returns an iterator over the altnames of an interface.
     pub fn altnames(&self) -> impl Iterator<Item = &String> {
         self.altnames.iter()
+    }
+
+    /// Returns the flags of this interface
+    pub fn flags(&self) -> impl Iterator<Item = &LinkFlag> {
+        self.flags.iter()
     }
 
     /// Returns whether the interface is currently in an UP state.
