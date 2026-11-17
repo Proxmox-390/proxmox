@@ -2,7 +2,9 @@ mod helper;
 mod lexer;
 mod parser;
 
-pub use helper::{AltnameMapping, IpLink, assert_ifupdown2_installed, network_reload, parse_cidr};
+pub use helper::{
+    AltnameMapping, IpLink, LinkInfo, assert_ifupdown2_installed, network_reload, parse_cidr,
+};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;

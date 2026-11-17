@@ -132,6 +132,18 @@ pub struct LinkInfo {
     info_kind: Option<String>,
 }
 
+impl LinkInfo {
+    /// The attributes of the link as a port of its master device, e.g. a bond.
+    pub fn info_slave_data(&self) -> Option<&SlaveData> {
+        self.info_slave_data.as_ref()
+    }
+
+    /// The kind of the link, e.g. `bridge`, `vlan` or `wireguard`. Unset for physical interfaces.
+    pub fn info_kind(&self) -> Option<&String> {
+        self.info_kind.as_ref()
+    }
+}
+
 /// The fields specific to an interface of type `ether`.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Deserialize)]
 pub struct EtherLink {
@@ -229,6 +241,16 @@ impl IpLink {
         }
 
         None
+    }
+
+    /// The [`LinkInfo`] for this link.
+    pub fn linkinfo(&self) -> Option<&LinkInfo> {
+        self.linkinfo.as_ref()
+    }
+
+    /// The operating state of the interface.
+    pub fn operstate(&self) -> &str {
+        &self.operstate
     }
 
     /// Returns an iterator over the altnames of an interface.
