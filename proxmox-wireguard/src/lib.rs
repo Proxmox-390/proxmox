@@ -42,7 +42,7 @@ impl From<proxmox_ini::Error> for Error {
 }
 
 /// Public key of a WireGuard peer.
-#[derive(Clone, Copy, Deserialize, Serialize, Hash, Debug)]
+#[derive(Clone, Copy, Deserialize, Serialize, Hash, Debug, PartialEq, Eq, Ord, PartialOrd)]
 #[serde(transparent)]
 pub struct PublicKey(#[serde(with = "proxmox_serde::byte_array_as_base64")] [u8; 32]);
 
@@ -58,6 +58,9 @@ impl ApiType for PublicKey {
 impl UpdaterType for PublicKey {
     type Updater = Option<PublicKey>;
 }
+
+proxmox_serde::forward_from_str_to_deserialize!(PublicKey);
+proxmox_serde::forward_display_to_serialize!(PublicKey);
 
 /// Private key of a WireGuard peer.
 #[derive(Clone, Copy, Deserialize, Serialize, Hash)]
