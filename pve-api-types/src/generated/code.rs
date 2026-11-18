@@ -311,7 +311,6 @@
 /// - /nodes/{node}/storage/{storage}/upload
 /// - /nodes/{node}/suspendall
 /// - /nodes/{node}/syslog
-/// - /nodes/{node}/time
 /// - /nodes/{node}/version
 /// - /nodes/{node}/vncshell
 /// - /nodes/{node}/vncwebsocket
@@ -1330,6 +1329,11 @@ pub trait PveClient {
     /// Read node status
     async fn node_status(&self, node: &str) -> Result<NodeStatus, Error> {
         Err(Error::Other("node_status not implemented"))
+    }
+
+    /// Read server time and time zone settings.
+    async fn node_time(&self, node: &str) -> Result<NodeTime, Error> {
+        Err(Error::Other("node_time not implemented"))
     }
 
     /// List all custom and default CPU models.
@@ -3588,6 +3592,15 @@ where
     async fn node_status(&self, node: &str) -> Result<NodeStatus, Error> {
         let url = &format!(
             "/api2/extjs/nodes/{}/status",
+            percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+        );
+        Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
+    /// Read server time and time zone settings.
+    async fn node_time(&self, node: &str) -> Result<NodeTime, Error> {
+        let url = &format!(
+            "/api2/extjs/nodes/{}/time",
             percent_encode(node.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
         );
         Ok(self.0.get(url).await?.expect_json()?.data)

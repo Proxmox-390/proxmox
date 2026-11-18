@@ -11980,6 +11980,36 @@ serde_plain::derive_fromstr_from_deserialize!(NodeSubscriptionInfoStatus);
 
 #[api(
     properties: {
+        localtime: {
+            minimum: 1297163644,
+            type: Integer,
+        },
+        time: {
+            minimum: 1297163644,
+            type: Integer,
+        },
+        timezone: {
+            type: String,
+        },
+    },
+)]
+/// Object.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct NodeTime {
+    /// Seconds since 1970-01-01 00:00:00 (local time)
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
+    pub localtime: u64,
+
+    /// Seconds since 1970-01-01 00:00:00 UTC.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
+    pub time: u64,
+
+    /// Time zone
+    pub timezone: String,
+}
+
+#[api(
+    properties: {
         apitoken: {
             type: String,
         },

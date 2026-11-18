@@ -392,6 +392,7 @@ Schema2Rust::generate_struct(
     {},
 );
 api(GET => '/nodes/{node}/status', 'node_status', 'return-name' => 'NodeStatus');
+api(GET => '/nodes/{node}/time', 'node_time', 'return-name' => 'NodeTime');
 
 api(GET => '/nodes/{node}/capabilities/qemu/cpu', 'qemu_cpu_capabilities', 'output-type' => 'Vec<QemuCpuModel>');
 
