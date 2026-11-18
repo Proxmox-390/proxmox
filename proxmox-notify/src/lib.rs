@@ -28,6 +28,8 @@ pub mod schema;
 mod error;
 pub use error::Error;
 
+use endpoints::Endpoint;
+
 #[api()]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
@@ -82,18 +84,6 @@ pub enum Origin {
     Builtin,
     /// Config entry provided by the system, but modified by the user.
     ModifiedBuiltin,
-}
-
-/// Notification endpoint trait, implemented by all endpoint plugins
-pub trait Endpoint {
-    /// Send a documentation
-    fn send(&self, notification: &Notification) -> Result<(), Error>;
-
-    /// The name/identifier for this endpoint
-    fn name(&self) -> &str;
-
-    /// Check if the endpoint is disabled
-    fn disabled(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -462,7 +452,7 @@ impl Bus {
     }
 
     #[cfg(test)]
-    pub fn add_endpoint(&mut self, endpoint: Box<dyn Endpoint>) {
+    pub(crate) fn add_endpoint(&mut self, endpoint: Box<dyn Endpoint>) {
         self.endpoints.insert(endpoint.name().to_string(), endpoint);
     }
 

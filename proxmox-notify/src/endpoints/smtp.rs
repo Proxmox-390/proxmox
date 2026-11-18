@@ -14,7 +14,9 @@ use crate::context::context;
 use crate::endpoints::common::mail;
 use crate::renderer::TemplateType;
 use crate::schema::{EMAIL_SCHEMA, ENTITY_NAME_SCHEMA, USER_SCHEMA};
-use crate::{Content, Endpoint, Error, Notification, Origin, renderer};
+use crate::{Content, Error, Notification, Origin, renderer};
+
+use super::Endpoint;
 
 pub(crate) const SMTP_TYPENAME: &str = "smtp";
 
