@@ -1,5 +1,6 @@
 //! Worker task that sends queued notifications.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -161,8 +162,19 @@ impl QueueWorker {
             })
             .unwrap_or_default();
 
+        // Claiming one of several entries with the same ID would rename it over another one.
+        let duplicates = duplicate_ids(&queued_notifications);
+        for id in &duplicates {
+            tracing::warn!("notification {id} is queued more than once, leaving all copies alone");
+        }
+
         for queued_notification in queued_notifications {
             let id = queued_notification.id().clone();
+
+            if duplicates.contains(&id) {
+                continue;
+            }
+
             let queue = Arc::clone(&self.queue);
             let context = self.context.clone();
             let max_retries = self.retry_attempts;
@@ -307,6 +319,16 @@ impl QueueWorker {
     async fn wait(&self) {
         tokio::time::sleep(self.polling_backoff.active_interval()).await;
     }
+}
+
+fn duplicate_ids(queued_notifications: &[QueuedNotification]) -> HashSet<Uuid> {
+    let mut seen = HashSet::new();
+
+    queued_notifications
+        .iter()
+        .filter(|queued| !seen.insert(queued.id()))
+        .map(|queued| queued.id().clone())
+        .collect()
 }
 
 #[derive(Debug, PartialEq)]
@@ -687,6 +709,39 @@ mod test {
                     notification.id()
                 ))
                 .exists()
+        );
+    }
+
+    #[test]
+    fn test_skip_duplicate_ids() {
+        let setup = WorkerTestSetup::new();
+        let id = setup.submit_notification();
+
+        let path = setup.dir.path().join(format!("notification-{id}"));
+        let copy = setup
+            .dir
+            .path()
+            .join(format!("notification-{id}.attempt-1"));
+        std::fs::copy(&path, &copy).unwrap();
+
+        let mut worker = setup.create_worker(true, Some(2));
+        run_single_cycle(&mut worker);
+
+        let mut attempts = setup.attempts();
+        attempts.sort();
+        assert_eq!(attempts, [0, 1]);
+        assert!(worker.history.is_empty());
+
+        std::fs::remove_file(copy).unwrap();
+        run_single_cycle(&mut worker);
+
+        assert!(setup.attempts().is_empty());
+        assert_eq!(
+            worker.history,
+            [HistoryEntry {
+                id,
+                status: HistoryStatus::Sent,
+            }]
         );
     }
 
