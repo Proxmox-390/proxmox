@@ -170,7 +170,8 @@ pub fn fs_info<P: ?Sized + nix::NixPath>(path: &P) -> nix::Result<FileSystemInfo
         available: stat.f_bavail * block_size,
         total_inodes: stat.f_files,
         free_inodes: stat.f_ffree,
-        fs_type: stat.f_type,
+        #[allow(clippy::unnecessary_cast)] // f_type is u32 on s390x, i64 elsewhere
+        fs_type: stat.f_type as i64,
         fs_id: stat.f_fsid,
     })
 }
