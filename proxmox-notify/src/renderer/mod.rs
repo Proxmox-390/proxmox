@@ -2,8 +2,9 @@
 
 use std::{fmt::Display, time::Duration};
 
+use handlebars::Context as HandlebarsContext;
 use handlebars::{
-    Context, Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason,
+    Handlebars, Helper, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +13,7 @@ use tracing::error;
 use proxmox_human_byte::HumanByte;
 use proxmox_time::TimeSpan;
 
-use crate::{Error, context};
+use crate::{Context, Error};
 
 mod html;
 mod plaintext;
@@ -76,7 +77,7 @@ fn value_to_timestamp(val: &Value) -> Option<String> {
 fn handlebars_relative_percentage_helper(
     h: &Helper,
     _: &Handlebars,
-    _: &Context,
+    _: &HandlebarsContext,
     _rc: &mut RenderContext,
     out: &mut dyn Output,
 ) -> HelperResult {
@@ -159,7 +160,7 @@ impl ValueRenderFunction {
             Box::new(
                 move |h: &Helper,
                       _r: &Handlebars,
-                      _: &Context,
+                      _: &HandlebarsContext,
                       _rc: &mut RenderContext,
                       out: &mut dyn Output|
                       -> HelperResult {
@@ -267,12 +268,13 @@ impl BlockRenderFunctions {
 }
 
 fn render_template_impl(
+    context: &Context,
     data: &Value,
     renderer: TemplateType,
     filename: &str,
     source: TemplateSource,
 ) -> Result<Option<String>, Error> {
-    let template_string = context::context()
+    let template_string = context
         .lookup_template(filename, None, source)
         .map_err(Error::template_could_not_be_read)?;
 
@@ -310,6 +312,7 @@ fn render_template_impl(
 /// HTML template is found or renderable, it falls back to use a plaintext
 /// template encapsulated in a pre-formatted HTML block (<pre>).
 pub fn render_template(
+    context: &Context,
     mut ty: TemplateType,
     template: &str,
     data: &Value,
@@ -318,7 +321,7 @@ pub fn render_template(
 
     loop {
         let filename = format!("{template}-{suffix}", suffix = ty.file_suffix());
-        let result = render_template_impl(data, ty, &filename, source);
+        let result = render_template_impl(context, data, ty, &filename, source);
 
         match result {
             Ok(Some(s)) => {

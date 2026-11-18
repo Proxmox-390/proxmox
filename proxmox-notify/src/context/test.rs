@@ -1,11 +1,12 @@
-use crate::context::Context;
+use crate::Context;
+use crate::context::ContextImpl;
 use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
 #[derive(Debug)]
-pub struct TestContext;
+pub(crate) struct TestContext;
 
-impl Context for TestContext {
+impl ContextImpl for TestContext {
     fn lookup_email_for_user(&self, user: &str) -> Option<String> {
         user.split_once('@').and_then(|(user, realm)| {
             if realm == "pve" {
@@ -40,4 +41,8 @@ impl Context for TestContext {
     ) -> Result<Option<String>, BoxedError> {
         Ok(Some(String::new()))
     }
+}
+
+pub(crate) fn test_context() -> Context {
+    Context::new(TestContext)
 }

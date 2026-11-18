@@ -4,11 +4,10 @@ use serde::{Deserialize, Serialize};
 use proxmox_schema::api_types::COMMENT_SCHEMA;
 use proxmox_schema::{Updater, api};
 
-use crate::context;
 use crate::endpoints::common::mail;
 use crate::renderer::TemplateType;
 use crate::schema::{EMAIL_SCHEMA, ENTITY_NAME_SCHEMA, USER_SCHEMA};
-use crate::{Content, Error, Notification, Origin, renderer};
+use crate::{Content, Context, Error, Notification, Origin, renderer};
 
 use super::Endpoint;
 
@@ -106,8 +105,9 @@ pub struct SendmailEndpoint {
 }
 
 impl Endpoint for SendmailEndpoint {
-    fn send(&self, notification: &Notification) -> Result<(), Error> {
+    fn send(&self, context: &Context, notification: &Notification) -> Result<(), Error> {
         let recipients = mail::get_recipients(
+            context,
             self.config.mailto.as_slice(),
             self.config.mailto_user.as_slice(),
         );
@@ -117,7 +117,7 @@ impl Endpoint for SendmailEndpoint {
             .config
             .from_address
             .clone()
-            .unwrap_or_else(|| context().default_sendmail_from());
+            .unwrap_or_else(|| context.default_sendmail_from());
 
         match &notification.content {
             Content::Template {
@@ -125,17 +125,25 @@ impl Endpoint for SendmailEndpoint {
                 data,
             } => {
                 let subject =
-                    renderer::render_template(TemplateType::Subject, template_name, data)?;
-                let html_part =
-                    renderer::render_template(TemplateType::HtmlBody, template_name, data)?;
-                let text_part =
-                    renderer::render_template(TemplateType::PlaintextBody, template_name, data)?;
+                    renderer::render_template(context, TemplateType::Subject, template_name, data)?;
+                let html_part = renderer::render_template(
+                    context,
+                    TemplateType::HtmlBody,
+                    template_name,
+                    data,
+                )?;
+                let text_part = renderer::render_template(
+                    context,
+                    TemplateType::PlaintextBody,
+                    template_name,
+                    data,
+                )?;
 
                 let author = self
                     .config
                     .author
                     .clone()
-                    .unwrap_or_else(|| context().default_sendmail_author());
+                    .unwrap_or_else(|| context.default_sendmail_author());
 
                 let mut mail = Mail::new(&author, &mailfrom, &subject, &text_part)
                     .with_html_alt(&html_part)

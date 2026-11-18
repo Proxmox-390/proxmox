@@ -24,10 +24,9 @@ use proxmox_http::{HttpClient, HttpOptions, ProxyConfig};
 use proxmox_schema::api_types::{COMMENT_SCHEMA, HTTP_URL_SCHEMA};
 use proxmox_schema::{ApiStringFormat, ApiType, Schema, StringSchema, Updater, api};
 
-use crate::context::context;
 use crate::renderer::TemplateType;
 use crate::schema::ENTITY_NAME_SCHEMA;
-use crate::{Content, Error, Notification, Origin, renderer};
+use crate::{Content, Context, Error, Notification, Origin, renderer};
 
 use super::Endpoint;
 
@@ -242,10 +241,10 @@ pub const KEY_AND_BASE64_VALUE_SCHEMA: Schema =
 
 impl Endpoint for WebhookEndpoint {
     /// Send a notification to a webhook endpoint.
-    fn send(&self, notification: &Notification) -> Result<(), Error> {
-        let request = self.build_request(notification)?;
+    fn send(&self, context: &Context, notification: &Notification) -> Result<(), Error> {
+        let request = self.build_request(context, notification)?;
 
-        self.create_client()?
+        self.create_client(context)?
             .request(request)
             .map_err(|err| self.mask_secret_in_error(err))
             .map_err(Error::http_request_failed)?;
@@ -265,8 +264,8 @@ impl Endpoint for WebhookEndpoint {
 }
 
 impl WebhookEndpoint {
-    fn create_client(&self) -> Result<Client, Error> {
-        let proxy_config = context()
+    fn create_client(&self, context: &Context) -> Result<Client, Error> {
+        let proxy_config = context
             .http_proxy_config()
             .map(|url| ProxyConfig::parse_proxy_url(&url))
             .transpose()
@@ -280,16 +279,24 @@ impl WebhookEndpoint {
         Ok(Client::new_with_timeout(options, HTTP_TIMEOUT))
     }
 
-    fn build_request(&self, notification: &Notification) -> Result<Request<String>, Error> {
+    fn build_request(
+        &self,
+        context: &Context,
+        notification: &Notification,
+    ) -> Result<Request<String>, Error> {
         let (title, message) = match &notification.content {
             Content::Template {
                 template_name,
                 data,
             } => {
                 let rendered_title =
-                    renderer::render_template(TemplateType::Subject, template_name, data)?;
-                let rendered_message =
-                    renderer::render_template(TemplateType::PlaintextBody, template_name, data)?;
+                    renderer::render_template(context, TemplateType::Subject, template_name, data)?;
+                let rendered_message = renderer::render_template(
+                    context,
+                    TemplateType::PlaintextBody,
+                    template_name,
+                    data,
+                )?;
 
                 (rendered_title, rendered_message)
             }
@@ -511,7 +518,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::Severity;
+    use crate::{Severity, context::test};
 
     #[test]
     fn test_build_request() {
@@ -566,7 +573,9 @@ hello%20world
 
         let notification = Notification::from_template(Severity::Info, "foo", json!({}), data);
 
-        let request = endpoint.build_request(&notification).unwrap();
+        let context = test::test_context();
+
+        let request = endpoint.build_request(&context, &notification).unwrap();
 
         assert_eq!(request.uri(), "http://localhost/hello%20world");
         assert_eq!(request.body(), expected_body);

@@ -285,11 +285,12 @@ fn remove_private_config_entry(config: &mut Config, name: &str) -> Result<(), Ht
 
 #[cfg(test)]
 mod test_helpers {
-    use crate::Config;
+    use crate::{Config, context::test};
 
     #[allow(unused)]
     pub fn empty_config() -> Config {
-        Config::new("", "").unwrap()
+        let context = test::test_context();
+        Config::new(&context, "", "").unwrap()
     }
 }
 

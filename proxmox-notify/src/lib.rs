@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::str::FromStr;
 
-use context::context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::json;
@@ -28,6 +27,9 @@ pub mod schema;
 
 mod error;
 pub use error::Error;
+
+pub use context::Context;
+pub use context::ContextImpl;
 
 use endpoints::Endpoint;
 
@@ -209,11 +211,15 @@ pub struct Config {
 
 impl Config {
     /// Parse raw config
-    pub fn new(raw_config: &str, raw_private_config: &str) -> Result<Self, Error> {
+    pub fn new(
+        context: &Context,
+        raw_config: &str,
+        raw_private_config: &str,
+    ) -> Result<Self, Error> {
         let (mut config, digest) = config::config(raw_config)?;
         let (private_config, _) = config::private_config(raw_private_config)?;
 
-        let default_config = context().default_config();
+        let default_config = context.default_config();
 
         let builtin_config = config::config_parser()
             .parse("<builtin>", default_config)
@@ -466,7 +472,7 @@ impl Bus {
     /// the notification.
     ///
     /// Any errors will not be returned but only logged.
-    pub fn send(&self, notification: &Notification) {
+    pub fn send(&self, context: &Context, notification: &Notification) {
         let targets = matcher::check_matches(self.matchers.as_slice(), notification);
 
         for target in targets {
@@ -479,7 +485,7 @@ impl Bus {
                     continue;
                 }
 
-                match endpoint.send(notification) {
+                match endpoint.send(context, notification) {
                     Ok(_) => {
                         info!("notified via target `{name}`");
                     }
@@ -498,7 +504,7 @@ impl Bus {
     ///
     /// In contrast to the `send` function, this function will return
     /// any errors to the caller.
-    pub fn test_target(&self, target: &str) -> Result<(), Error> {
+    pub fn test_target(&self, context: &Context, target: &str) -> Result<(), Error> {
         let notification = Notification {
             metadata: Metadata {
                 severity: Severity::Info,
@@ -514,7 +520,7 @@ impl Bus {
         };
 
         if let Some(endpoint) = self.endpoints.get(target) {
-            endpoint.send(&notification)?;
+            endpoint.send(context, &notification)?;
         } else {
             return Err(Error::target_does_not_exist(target));
         }
@@ -529,6 +535,7 @@ mod tests {
 
     use proxmox_match_expression::Expression;
 
+    use crate::context::test;
     use crate::matcher::{expression::NotificationMatcher, severity::SeverityMatcher};
 
     use super::*;
@@ -542,7 +549,7 @@ mod tests {
     }
 
     impl Endpoint for MockEndpoint {
-        fn send(&self, message: &Notification) -> Result<(), Error> {
+        fn send(&self, _context: &Context, message: &Notification) -> Result<(), Error> {
             self.messages.borrow_mut().push(message.clone());
 
             Ok(())
@@ -576,6 +583,7 @@ mod tests {
 
     #[test]
     fn test_add_mock_endpoint() -> Result<(), Error> {
+        let context = test::test_context();
         let mock = MockEndpoint::new("endpoint");
 
         let mut bus = Bus::default();
@@ -590,12 +598,15 @@ mod tests {
         bus.add_matcher(matcher);
 
         // Send directly to endpoint
-        bus.send(&Notification::from_template(
-            Severity::Info,
-            "test",
-            Default::default(),
-            Default::default(),
-        ));
+        bus.send(
+            &context,
+            &Notification::from_template(
+                Severity::Info,
+                "test",
+                Default::default(),
+                Default::default(),
+            ),
+        );
         let messages = mock.messages();
         assert_eq!(messages.len(), 1);
 
@@ -604,6 +615,8 @@ mod tests {
 
     #[test]
     fn test_multiple_endpoints_with_different_matchers() -> Result<(), Error> {
+        let context = test::test_context();
+
         let endpoint1 = MockEndpoint::new("mock1");
         let endpoint2 = MockEndpoint::new("mock2");
 
@@ -644,7 +657,7 @@ mod tests {
                 Default::default(),
             );
 
-            bus.send(&notification);
+            bus.send(&context, &notification);
         };
 
         send_with_severity(Severity::Info);

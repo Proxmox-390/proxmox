@@ -10,11 +10,10 @@ use serde::{Deserialize, Serialize};
 use proxmox_schema::api_types::COMMENT_SCHEMA;
 use proxmox_schema::{Updater, api};
 
-use crate::context::context;
 use crate::endpoints::common::mail;
 use crate::renderer::TemplateType;
 use crate::schema::{EMAIL_SCHEMA, ENTITY_NAME_SCHEMA, USER_SCHEMA};
-use crate::{Content, Error, Notification, Origin, renderer};
+use crate::{Content, Context, Error, Notification, Origin, renderer};
 
 use super::Endpoint;
 
@@ -160,7 +159,7 @@ pub struct SmtpEndpoint {
 }
 
 impl Endpoint for SmtpEndpoint {
-    fn send(&self, notification: &Notification) -> Result<(), Error> {
+    fn send(&self, context: &Context, notification: &Notification) -> Result<(), Error> {
         let tls_parameters = TlsParameters::new(self.config.server.clone())
             .map_err(|err| Error::invalid_config_with_source("invalid SMTP server name", err))?;
 
@@ -197,6 +196,7 @@ impl Endpoint for SmtpEndpoint {
         let transport = transport_builder.build();
 
         let recipients = mail::get_recipients(
+            context,
             self.config.mailto.as_slice(),
             self.config.mailto_user.as_slice(),
         );
@@ -215,7 +215,7 @@ impl Endpoint for SmtpEndpoint {
             .config
             .author
             .clone()
-            .unwrap_or_else(|| context().default_sendmail_author());
+            .unwrap_or_else(|| context.default_sendmail_author());
 
         let quoted_author = quote_name_if_needed(&author);
 
@@ -232,11 +232,19 @@ impl Endpoint for SmtpEndpoint {
                 data,
             } => {
                 let subject =
-                    renderer::render_template(TemplateType::Subject, template_name, data)?;
-                let html_part =
-                    renderer::render_template(TemplateType::HtmlBody, template_name, data)?;
-                let text_part =
-                    renderer::render_template(TemplateType::PlaintextBody, template_name, data)?;
+                    renderer::render_template(context, TemplateType::Subject, template_name, data)?;
+                let html_part = renderer::render_template(
+                    context,
+                    TemplateType::HtmlBody,
+                    template_name,
+                    data,
+                )?;
+                let text_part = renderer::render_template(
+                    context,
+                    TemplateType::PlaintextBody,
+                    template_name,
+                    data,
+                )?;
 
                 email_builder = email_builder.subject(subject);
 

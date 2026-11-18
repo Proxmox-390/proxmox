@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::context::{Context, common};
+use crate::context::{ContextImpl, common};
 use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
@@ -30,7 +30,7 @@ matcher: default-matcher
 #[derive(Debug)]
 pub struct PVEContext;
 
-impl Context for PVEContext {
+impl ContextImpl for PVEContext {
     fn lookup_email_for_user(&self, user: &str) -> Option<String> {
         let content = common::attempt_file_read("/etc/pve/user.cfg");
         content.and_then(|content| lookup_mail_address(&content, user))

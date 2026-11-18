@@ -9,10 +9,9 @@ use proxmox_http::{HttpClient, HttpOptions, ProxyConfig};
 use proxmox_schema::api_types::COMMENT_SCHEMA;
 use proxmox_schema::{Updater, api};
 
-use crate::context::context;
 use crate::renderer::TemplateType;
 use crate::schema::ENTITY_NAME_SCHEMA;
-use crate::{Content, Error, Notification, Origin, Severity, renderer};
+use crate::{Content, Context, Error, Notification, Origin, Severity, renderer};
 
 use super::Endpoint;
 
@@ -98,16 +97,20 @@ pub enum DeleteableGotifyProperty {
 }
 
 impl Endpoint for GotifyEndpoint {
-    fn send(&self, notification: &Notification) -> Result<(), Error> {
+    fn send(&self, context: &Context, notification: &Notification) -> Result<(), Error> {
         let (title, message) = match &notification.content {
             Content::Template {
                 template_name,
                 data,
             } => {
                 let rendered_title =
-                    renderer::render_template(TemplateType::Subject, template_name, data)?;
-                let rendered_message =
-                    renderer::render_template(TemplateType::PlaintextBody, template_name, data)?;
+                    renderer::render_template(context, TemplateType::Subject, template_name, data)?;
+                let rendered_message = renderer::render_template(
+                    context,
+                    TemplateType::PlaintextBody,
+                    template_name,
+                    data,
+                )?;
 
                 (rendered_title, rendered_message)
             }
@@ -145,7 +148,7 @@ impl Endpoint for GotifyEndpoint {
             ),
         ]);
 
-        let proxy_config = context()
+        let proxy_config = context
             .http_proxy_config()
             .map(|url| ProxyConfig::parse_proxy_url(&url))
             .transpose()

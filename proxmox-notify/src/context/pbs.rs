@@ -6,7 +6,7 @@ use tracing::error;
 use proxmox_schema::{ObjectSchema, Schema, StringSchema};
 use proxmox_section_config::{SectionConfig, SectionConfigPlugin};
 
-use crate::context::{Context, common};
+use crate::context::{ContextImpl, common};
 use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
@@ -80,7 +80,7 @@ pub struct PBSContext;
 
 pub static PBS_CONTEXT: PBSContext = PBSContext;
 
-impl Context for PBSContext {
+impl ContextImpl for PBSContext {
     fn lookup_email_for_user(&self, user: &str) -> Option<String> {
         let content = common::attempt_file_read(PBS_USER_CFG_FILENAME);
         content.and_then(|content| lookup_mail_address(&content, user))

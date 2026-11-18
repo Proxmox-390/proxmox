@@ -1,4 +1,6 @@
-use crate::{Error, Notification};
+use crate::Context;
+use crate::Error;
+use crate::Notification;
 
 #[cfg(feature = "gotify")]
 pub mod gotify;
@@ -14,7 +16,7 @@ mod common;
 /// Notification endpoint trait, implemented by all endpoint plugins
 pub(crate) trait Endpoint {
     /// Send a notification to this endpoint.
-    fn send(&self, notification: &Notification) -> Result<(), Error>;
+    fn send(&self, context: &Context, notification: &Notification) -> Result<(), Error>;
 
     /// The name/identifier for this endpoint
     fn name(&self) -> &str;

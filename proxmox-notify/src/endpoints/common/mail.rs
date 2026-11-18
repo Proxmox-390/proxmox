@@ -1,11 +1,15 @@
-use crate::context;
+use crate::Context;
 
 /// Get list of email recipients from a list of email addresses and users.
 ///
 /// Any user passed in the user list will be looked up in the user configuration to
 /// obtain this user's email address. The list of returned email addresses does
 /// not contain any duplicates.
-pub(crate) fn get_recipients(email_addrs: &[String], users: &[String]) -> Vec<String> {
+pub(crate) fn get_recipients(
+    context: &Context,
+    email_addrs: &[String],
+    users: &[String],
+) -> Vec<String> {
     let mut recipients = Vec::new();
 
     for addr in email_addrs {
@@ -15,7 +19,7 @@ pub(crate) fn get_recipients(email_addrs: &[String], users: &[String]) -> Vec<St
     }
 
     for user in users {
-        match context::context().lookup_email_for_user(user) {
+        match context.lookup_email_for_user(user) {
             Some(address) => {
                 if !recipients.contains(&address) {
                     recipients.push(address);
@@ -32,6 +36,8 @@ pub(crate) fn get_recipients(email_addrs: &[String], users: &[String]) -> Vec<St
 
 #[cfg(test)]
 mod tests {
+    use crate::context::test;
+
     use super::*;
 
     #[test]
@@ -54,7 +60,9 @@ mod tests {
             "user2@example.com",
         ];
 
-        let addrs = get_recipients(&emails, &users);
+        let context = test::test_context();
+
+        let addrs = get_recipients(&context, &emails, &users);
 
         assert_eq!(addrs, expected);
     }

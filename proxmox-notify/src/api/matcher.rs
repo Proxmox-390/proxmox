@@ -210,14 +210,17 @@ mod tests {
 
     use super::*;
 
-    use crate::matcher::expression::NotificationMatcher;
+    use crate::{context::test::test_context, matcher::expression::NotificationMatcher};
 
     fn empty_config() -> Config {
-        Config::new("", "").unwrap()
+        let context = test_context();
+        Config::new(&context, "", "").unwrap()
     }
 
     fn config_with_two_matchers() -> Config {
+        let context = test_context();
         Config::new(
+            &context,
             "
 sendmail: foo
     mailto test@example.com
@@ -499,7 +502,8 @@ matcher: matcher2
         // The normalized expression should stay the same after
         // a read/write cycle of the config
         let (raw_config, raw_private_config) = config.write().unwrap();
-        let config = Config::new(&raw_config, &raw_private_config).unwrap();
+        let context = test_context();
+        let config = Config::new(&context, &raw_config, &raw_private_config).unwrap();
         let matcher = get_matcher(&config, "matcher1")?;
 
         assert_eq!(matcher.expression, Some(stored));
