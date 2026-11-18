@@ -56,6 +56,15 @@ pub enum Error {
         source: Option<BoxedError>,
     },
 
+    /// An operation on the notification queue failed.
+    #[error("notification queue error: {err}", err = print_optional_error(.message, .source))]
+    Queue {
+        /// Description of the error.
+        message: String,
+        /// Underlying error, if any.
+        source: Option<BoxedError>,
+    },
+
     /// The notification configuration could not be serialized.
     #[error("could not serialize config: {0}")]
     ConfigSerialization(#[source] BoxedError),
@@ -150,6 +159,14 @@ impl Error {
         source: impl Into<BoxedError>,
     ) -> Self {
         Self::InvalidNotification {
+            message: s.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// Create an [`Error::Queue`] with an underlying error.
+    pub(crate) fn queue_with_source(s: impl Into<String>, source: impl Into<BoxedError>) -> Self {
+        Self::Queue {
             message: s.into(),
             source: Some(source.into()),
         }

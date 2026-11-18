@@ -28,6 +28,9 @@ mod send;
 #[cfg(feature = "send-impl")]
 pub use send::send;
 
+#[cfg(feature = "queue-submitter")]
+pub mod queue;
+
 mod error;
 pub use error::Error;
 
