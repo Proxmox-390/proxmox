@@ -1,3 +1,4 @@
+use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 
 use crate::Config;
@@ -105,7 +106,7 @@ pub fn update_matcher(
     name: &str,
     matcher_updater: MatcherConfigUpdater,
     delete: Option<&[DeleteableMatcherProperty]>,
-    digest: Option<&[u8]>,
+    digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
 
@@ -251,7 +252,7 @@ matcher: matcher2
                 "matcher1",
                 Default::default(),
                 None,
-                Some(&[0u8; 32])
+                Some(ConfigDigest::from([0u8; 32]))
             )
             .is_err()
         );
@@ -266,7 +267,7 @@ matcher: matcher2
 
         let mut config = config_with_two_matchers();
 
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         update_matcher(
             &mut config,
@@ -282,7 +283,7 @@ matcher: matcher2
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest.clone()),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;
@@ -303,7 +304,7 @@ matcher: matcher2
                 DeleteableMatcherProperty::Target,
                 DeleteableMatcherProperty::Comment,
             ]),
-            Some(&digest),
+            Some(digest),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;
@@ -323,7 +324,7 @@ matcher: matcher2
     fn test_matcher_update() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
 
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         update_matcher(
             &mut config,
@@ -335,7 +336,7 @@ matcher: matcher2
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest.clone()),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;
@@ -352,7 +353,7 @@ matcher: matcher2
                 DeleteableMatcherProperty::Comment,
                 DeleteableMatcherProperty::Expression,
             ]),
-            Some(&digest),
+            Some(digest),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;
@@ -378,7 +379,7 @@ matcher: matcher2
     #[cfg(feature = "legacy-matchers")]
     fn test_update_matcher_mutually_exclusive_with_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         let proto = MatcherConfigUpdater {
             expression: Some(valid_expression_string()),
@@ -388,17 +389,23 @@ matcher: matcher2
         let mut updater = proto.clone();
         updater.match_field = Some(vec!["exact:foo=bar".parse().unwrap()]);
 
-        assert!(update_matcher(&mut config, "matcher1", updater, None, Some(&digest),).is_err());
+        assert!(
+            update_matcher(&mut config, "matcher1", updater, None, Some(digest.clone()),).is_err()
+        );
 
         let mut updater = proto.clone();
         updater.match_calendar = Some(vec!["mon..sun 12-13".parse().unwrap()]);
 
-        assert!(update_matcher(&mut config, "matcher1", updater, None, Some(&digest),).is_err());
+        assert!(
+            update_matcher(&mut config, "matcher1", updater, None, Some(digest.clone()),).is_err()
+        );
 
         let mut updater = proto.clone();
         updater.match_severity = Some(vec!["info,warning".parse().unwrap()]);
 
-        assert!(update_matcher(&mut config, "matcher1", updater, None, Some(&digest),).is_err());
+        assert!(
+            update_matcher(&mut config, "matcher1", updater, None, Some(digest.clone()),).is_err()
+        );
 
         Ok(())
     }
@@ -406,7 +413,7 @@ matcher: matcher2
     #[test]
     fn test_update_invalid_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         assert!(
             update_matcher(
@@ -417,7 +424,7 @@ matcher: matcher2
                     ..Default::default()
                 },
                 None,
-                Some(&digest),
+                Some(digest),
             )
             .is_err()
         );
@@ -437,7 +444,7 @@ matcher: matcher2
     #[test]
     fn test_update_minifies_pretty_printed_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         let expr = nested_expression();
         let pretty = serde_json::to_string_pretty(&expr).unwrap();
@@ -451,7 +458,7 @@ matcher: matcher2
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;
@@ -466,7 +473,7 @@ matcher: matcher2
     #[test]
     fn test_update_normalizes_expression_with_extra_whitespace() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         // Same expression as `nested_expression`, but handwritten, with all sorts of
         // odd whitespace characters.
@@ -481,7 +488,7 @@ matcher: matcher2
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest),
         )?;
 
         let matcher = get_matcher(&config, "matcher1")?;

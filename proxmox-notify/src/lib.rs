@@ -11,6 +11,7 @@ use serde_json::Value;
 use serde_json::json;
 use tracing::{error, info};
 
+use proxmox_config_digest::ConfigDigest;
 use proxmox_schema::api;
 use proxmox_section_config::SectionConfigData;
 use proxmox_uuid::Uuid;
@@ -203,7 +204,7 @@ impl Notification {
 pub struct Config {
     config: SectionConfigData,
     private_config: SectionConfigData,
-    digest: [u8; 32],
+    digest: ConfigDigest,
 }
 
 impl Config {
@@ -291,7 +292,7 @@ impl Config {
 
     /// Returns the SHA256 digest of the configuration.
     /// The digest is only computed once when the configuration deserialized.
-    pub fn digest(&self) -> &[u8; 32] {
+    pub fn digest(&self) -> &ConfigDigest {
         &self.digest
     }
 }

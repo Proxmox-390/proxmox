@@ -1,3 +1,4 @@
+use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 
 use crate::Config;
@@ -71,7 +72,7 @@ pub fn update_endpoint(
     name: &str,
     updater: SendmailConfigUpdater,
     delete: Option<&[DeleteableSendmailProperty]>,
-    digest: Option<&[u8]>,
+    digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
 
@@ -216,7 +217,7 @@ pub mod tests {
                     ..Default::default()
                 },
                 None,
-                Some(&[0; 32]),
+                Some(ConfigDigest::from([0; 32])),
             )
             .is_err()
         );
@@ -229,7 +230,7 @@ pub mod tests {
         let mut config = empty_config();
         add_sendmail_endpoint_for_test(&mut config, "sendmail-endpoint")?;
 
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         update_endpoint(
             &mut config,
@@ -243,7 +244,7 @@ pub mod tests {
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest),
         )?;
 
         let endpoint = get_endpoint(&config, "sendmail-endpoint")?;

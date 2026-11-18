@@ -2,6 +2,7 @@
 //!
 //! All methods assume that the caller has already done any required permission checks.
 
+use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 use proxmox_schema::property_string::PropertyString;
 
@@ -136,7 +137,7 @@ pub fn update_endpoint(
     name: &str,
     config_updater: WebhookConfigUpdater,
     delete: Option<&[DeleteableWebhookProperty]>,
-    digest: Option<&[u8]>,
+    digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
 
@@ -337,7 +338,7 @@ mod tests {
                 "webhook-endpoint",
                 Default::default(),
                 None,
-                Some(&[0; 32])
+                Some(ConfigDigest::from([0; 32]))
             )
             .is_err()
         );
@@ -350,7 +351,7 @@ mod tests {
         let mut config = empty_config();
         add_default_webhook_endpoint(&mut config)?;
 
-        let digest = config.digest;
+        let digest = config.digest.clone();
 
         update_endpoint(
             &mut config,
@@ -371,7 +372,7 @@ mod tests {
                 ..Default::default()
             },
             None,
-            Some(&digest),
+            Some(digest),
         )?;
 
         let endpoint = get_endpoint(&config, "webhook-endpoint")?;

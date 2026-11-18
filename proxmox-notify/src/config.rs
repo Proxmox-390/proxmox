@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use proxmox_config_digest::ConfigDigest;
 use proxmox_schema::{ApiType, ObjectSchema};
 use proxmox_section_config::{SectionConfig, SectionConfigData, SectionConfigPlugin};
 
@@ -120,8 +121,8 @@ fn private_config_init() -> SectionConfig {
     config
 }
 
-pub fn config(raw_config: &str) -> Result<(SectionConfigData, [u8; 32]), Error> {
-    let digest = openssl::sha::sha256(raw_config.as_bytes());
+pub fn config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+    let digest = ConfigDigest::from_slice(raw_config.as_bytes());
     let data = config_parser()
         .parse("notifications.cfg", raw_config)
         .map_err(Error::config_deserialization)?;
@@ -129,8 +130,8 @@ pub fn config(raw_config: &str) -> Result<(SectionConfigData, [u8; 32]), Error> 
     Ok((data, digest))
 }
 
-pub fn private_config(raw_config: &str) -> Result<(SectionConfigData, [u8; 32]), Error> {
-    let digest = openssl::sha::sha256(raw_config.as_bytes());
+pub fn private_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+    let digest = ConfigDigest::from_slice(raw_config.as_bytes());
     let data = private_config_parser()
         .parse("priv/notifications.cfg", raw_config)
         .map_err(Error::config_deserialization)?;

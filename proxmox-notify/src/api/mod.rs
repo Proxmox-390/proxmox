@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 use proxmox_schema::api;
 
@@ -132,17 +133,11 @@ pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
     Ok(targets)
 }
 
-fn verify_digest(config: &Config, digest: Option<&[u8]>) -> Result<(), HttpError> {
-    if let Some(digest) = digest {
-        if config.digest != *digest {
-            http_bail!(
-                BAD_REQUEST,
-                "detected modified configuration - file changed by other user? Try again."
-            );
-        }
-    }
-
-    Ok(())
+fn verify_digest(config: &Config, digest: Option<ConfigDigest>) -> Result<(), HttpError> {
+    config
+        .digest()
+        .detect_modification(digest.as_ref())
+        .map_err(|err| http_err!(BAD_REQUEST, "{err}"))
 }
 
 fn ensure_endpoint_exists(#[allow(unused)] config: &Config, name: &str) -> Result<(), HttpError> {

@@ -19,7 +19,6 @@ http = { workspace = true, optional = true }
 lettre = { workspace = true, optional = true }
 tracing.workspace = true
 mail-parser = { workspace = true, optional = true }
-openssl.workspace = true
 percent-encoding = { workspace = true, optional = true }
 regex.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -29,6 +28,7 @@ thiserror.workspace = true
 
 proxmox-api-macro.workspace = true
 proxmox-base64 = { workspace = true, optional = true }
+proxmox-config-digest = { workspace = true, features = ["openssl"] }
 proxmox-http = { workspace = true, features = ["client-sync"], optional = true }
 proxmox-http-error.workspace = true
 proxmox-human-byte.workspace = true
