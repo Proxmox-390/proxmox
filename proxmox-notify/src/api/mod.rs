@@ -5,6 +5,7 @@ use proxmox_http_error::HttpError;
 
 use crate::Config;
 use crate::api_types::{EndpointType, Origin, Target};
+use crate::config::ConfigEntity;
 
 pub mod common;
 pub mod gotify;
@@ -82,6 +83,34 @@ pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
     }
 
     Ok(targets)
+}
+
+/// Set the `disable` property of an entity.
+///
+/// The caller is responsible for any needed permission checks.
+/// The caller also responsible for locking the configuration files.
+///
+/// Returns a `HttpError` if:
+///   - the entity does not exist (`404 Not found`)
+///
+pub fn set_entity_disabled(
+    config: &mut Config,
+    name: &str,
+    disable: bool,
+) -> Result<(), HttpError> {
+    if let Some(entity) = config.config.get_mut(name) {
+        match entity {
+            ConfigEntity::Sendmail(config) => config.disable = Some(disable),
+            ConfigEntity::Gotify(config) => config.disable = Some(disable),
+            ConfigEntity::Matcher(config) => config.disable = Some(disable),
+            ConfigEntity::Smtp(config) => config.disable = Some(disable),
+            ConfigEntity::Webhook(config) => config.disable = Some(disable),
+        }
+    } else {
+        http_bail!(NOT_FOUND, "entity '{name}' not found");
+    }
+
+    Ok(())
 }
 
 fn verify_digest(config: &Config, digest: Option<ConfigDigest>) -> Result<(), HttpError> {
@@ -317,5 +346,34 @@ mod tests {
         let config = prepare_config().unwrap();
 
         assert!(ensure_endpoints_exist(&config, &["sendmail", "gotify", "builtin"]).is_ok());
+    }
+
+    #[test]
+    fn test_set_target_disabled() -> Result<(), HttpError> {
+        let mut config = prepare_config()?;
+
+        set_entity_disabled(&mut config, "matcher", true)?;
+        assert_eq!(
+            matcher::get_matcher(&config, "matcher")?.disable,
+            Some(true)
+        );
+
+        set_entity_disabled(&mut config, "sendmail", true)?;
+        set_entity_disabled(&mut config, "gotify", true)?;
+        assert_eq!(
+            sendmail::get_endpoint(&config, "sendmail")?.disable,
+            Some(true)
+        );
+        assert_eq!(gotify::get_endpoint(&config, "gotify")?.disable, Some(true));
+
+        set_entity_disabled(&mut config, "sendmail", false)?;
+        assert_eq!(
+            sendmail::get_endpoint(&config, "sendmail")?.disable,
+            Some(false)
+        );
+
+        assert!(set_entity_disabled(&mut config, "nonexistent", true).is_err());
+
+        Ok(())
     }
 }

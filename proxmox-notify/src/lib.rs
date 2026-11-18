@@ -26,7 +26,7 @@ mod renderer;
 #[cfg(feature = "send-impl")]
 mod send;
 #[cfg(feature = "send-impl")]
-pub use send::{send, test_target};
+pub use send::send;
 
 mod error;
 pub use error::Error;

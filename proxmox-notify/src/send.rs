@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use proxmox_section_config::typed::{convert_to_typed_array, lookup};
-use proxmox_uuid::Uuid;
-use serde_json::json;
 use tracing::{error, info};
 
 use crate::api_types::{MatcherConfig, SendmailConfig};
@@ -12,9 +10,7 @@ use crate::endpoints::gotify::GotifyEndpoint;
 use crate::endpoints::sendmail::SendmailEndpoint;
 use crate::endpoints::smtp::SmtpEndpoint;
 use crate::endpoints::webhook::WebhookEndpoint;
-use crate::{
-    Config, Content, Context, EmailRecipient, Error, Metadata, Notification, Recipient, Severity,
-};
+use crate::{Config, Context, EmailRecipient, Error, Notification, Recipient};
 
 /// Send a notification to a given target.
 ///
@@ -23,17 +19,6 @@ use crate::{
 pub fn send(context: &Context, config: &Config, notification: &Notification) -> Result<(), Error> {
     let bus = Bus::from_config(config)?;
     bus.send(context, notification);
-
-    Ok(())
-}
-
-/// Test target (group or single endpoint) identified by its `name`.
-///
-/// The caller is responsible for any needed permission checks.
-/// Returns an `anyhow::Error` if sending via the endpoint failed.
-pub fn test_target(context: &Context, config: &Config, endpoint: &str) -> Result<(), Error> {
-    let bus = Bus::from_config(config)?;
-    bus.test_target(context, endpoint)?;
 
     Ok(())
 }
@@ -212,35 +197,6 @@ impl Bus {
         }
     }
 
-    /// Send a test notification to a target (endpoint or group).
-    ///
-    /// In contrast to the `send` function, this function will return
-    /// any errors to the caller.
-    pub fn test_target(&self, context: &Context, target: &str) -> Result<(), Error> {
-        let notification = Notification {
-            metadata: Metadata {
-                severity: Severity::Info,
-                // TODO: what fields would make sense for test notifications?
-                additional_fields: Default::default(),
-                timestamp: proxmox_time::epoch_i64(),
-            },
-            content: Content::Template {
-                template_name: "test".to_string(),
-                data: json!({ "target": target }),
-            },
-            id: Uuid::generate(),
-            recipient: Recipient::Target(target.into()),
-        };
-
-        if let Some(endpoint) = self.endpoints.get(target) {
-            endpoint.send(context, &notification)?;
-        } else {
-            return Err(Error::target_does_not_exist(target));
-        }
-
-        Ok(())
-    }
-
     fn check_matches(&self, notification: &Notification) -> HashSet<&str> {
         let mut targets = HashSet::new();
         let mut matching_matchers = Vec::new();
@@ -285,6 +241,7 @@ mod tests {
     use proxmox_match_expression::Expression;
 
     use crate::{
+        Severity,
         api_types::{expression::NotificationMatcher, severity::SeverityMatcher},
         context::{Context, test},
     };
