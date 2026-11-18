@@ -4,8 +4,8 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 use tracing::{error, info};
 
 use crate::api_types::{
-    MatcherConfig, MatcherReceipt, MatcherReceiptStatus, Receipt, SendmailConfig, TargetReceipt,
-    TargetReceiptStatus,
+    MatcherConfig, MatcherReceipt, MatcherReceiptStatus, Receipt, ReceiptDestination,
+    SendmailConfig, TargetReceipt, TargetReceiptStatus,
 };
 use crate::config::{ConfigEntity, PrivateConfigEntity};
 use crate::endpoints::Endpoint;
@@ -199,7 +199,7 @@ impl Bus {
             Ok(_) => {
                 info!("notified via `{recipient_list}`");
                 TargetReceipt {
-                    target: "legacy-sendmail".into(),
+                    destination: ReceiptDestination::Mailto(email_recipient.mailto.clone()),
                     status: TargetReceiptStatus::Delivered,
                     timestamp: proxmox_time::epoch_i64(),
                 }
@@ -208,7 +208,7 @@ impl Bus {
                 // Delivery failures are recorded in the receipt, not returned as an error.
                 error!("could not notify via `{recipient_list}`: {e}");
                 TargetReceipt {
-                    target: "legacy-sendmail".into(),
+                    destination: ReceiptDestination::Mailto(email_recipient.mailto.clone()),
                     status: TargetReceiptStatus::Error {
                         error_message: e.to_string(),
                     },
@@ -232,7 +232,7 @@ impl Bus {
                 info!("skipping disabled target '{name}'");
 
                 return TargetReceipt {
-                    target: name.to_string(),
+                    destination: ReceiptDestination::Target(name.to_string()),
                     status: TargetReceiptStatus::Disabled,
                     timestamp: proxmox_time::epoch_i64(),
                 };
@@ -242,7 +242,7 @@ impl Bus {
                 Ok(_) => {
                     info!("notified via target `{name}`");
                     TargetReceipt {
-                        target: name.to_string(),
+                        destination: ReceiptDestination::Target(name.to_string()),
                         status: TargetReceiptStatus::Delivered,
                         timestamp: proxmox_time::epoch_i64(),
                     }
@@ -251,7 +251,7 @@ impl Bus {
                     // Delivery failures are recorded in the receipt, not returned as an error.
                     error!("could not notify via target `{name}`: {e}");
                     TargetReceipt {
-                        target: name.to_string(),
+                        destination: ReceiptDestination::Target(name.to_string()),
                         status: TargetReceiptStatus::Error {
                             error_message: e.to_string(),
                         },
@@ -262,7 +262,7 @@ impl Bus {
         } else {
             error!("could not notify via target '{target}', it does not exist");
             TargetReceipt {
-                target: target.to_string(),
+                destination: ReceiptDestination::Target(target.to_string()),
                 status: TargetReceiptStatus::Error {
                     error_message: Error::target_does_not_exist(target).to_string(),
                 },
