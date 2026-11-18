@@ -1,3 +1,33 @@
+rust-pve-api-types (8.1.14-1) trixie; urgency=medium
+
+  * add the methods for the APT history of a node: its past transactions,
+    their terminal output and the changelogs of their package changes, the
+    changelog of an installed package and the changelogs of all pending
+    updates. This lets the Proxmox Datacenter Manager show the update history
+    of remote nodes and what pending updates bring. The methods return the
+    types of the proxmox-apt-history and proxmox-deb-changelog crates.
+
+  * cluster options: add the new datacenter API token policy, so that callers
+    can read the policy of a remote, for example to create a token there that
+    the policy accepts. Before, reading the cluster options silently dropped
+    it. Like the other property-string options it is typed as the parsed
+    struct, as the API returns it pre-parsed.
+
+  * add the methods for reading the time of a node and for updating ACLs.
+    This lets the Proxmox Datacenter Manager request the maximum token
+    lifetime that a remote's policy allows by the remote's clock, and give a
+    token with privilege separation the privileges it needs. The user, token,
+    group and role IDs that the ACL update takes get checked like
+    pve-access-control does, so invalid values are rejected before sending.
+
+  * generator: keep the 'sensitive' and 'multiline' flags of string properties
+    instead of dropping them with a warning, so types generated from an API
+    dump that sets them mark secrets, like the cloud-init password, and
+    strings that may contain line breaks. The tracked API dump uses neither
+    flag yet, so the generated types stay the same.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 02:32:02 +0100
+
 rust-pve-api-types (8.1.13-1) trixie; urgency=medium
 
   * node status: add the 'uptime' and 'idle' fields, which PVE always
