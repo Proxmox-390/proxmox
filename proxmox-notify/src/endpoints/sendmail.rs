@@ -8,7 +8,7 @@ use crate::{Content, Context, Error, Notification, renderer};
 use super::Endpoint;
 
 /// A sendmail notification endpoint.
-pub struct SendmailEndpoint {
+pub(crate) struct SendmailEndpoint {
     pub config: SendmailConfig,
 }
 

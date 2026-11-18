@@ -18,8 +18,8 @@ const SMTP_SUBMISSION_STARTTLS_PORT: u16 = 587;
 const SMTP_SUBMISSION_TLS_PORT: u16 = 465;
 const SMTP_TIMEOUT: u16 = 5;
 
-/// A sendmail notification endpoint.
-pub struct SmtpEndpoint {
+/// An SMTP notification endpoint.
+pub(crate) struct SmtpEndpoint {
     pub config: SmtpConfig,
     pub private_config: SmtpPrivateConfig,
 }
