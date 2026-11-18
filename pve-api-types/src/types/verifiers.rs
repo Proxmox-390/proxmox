@@ -62,6 +62,19 @@ pub SDN_ROUTE_MAP_ID_RESERVED = r##"^(pve_.*|MAP_VTEP_IN|MAP_VTEP_OUT|correct_sr
 pub SCOPED_IP_ALIAS_RE = r##"^(dc/|guest/)?([A-Za-z][A-Za-z0-9\-\_]+)$"##;
 
 pub LINE_FEED_RE = r##"[\n\r]"##;
+
+pub PVE_USERID_RE = r##"^[^\s:/]+@[A-Za-z][A-Za-z0-9\.\-_]+$"##;
+}
+
+/// Check a user ID like pve-access-control does, that is a user name and realm, 3 to 64 characters.
+pub fn verify_pve_userid(s: &str) -> Result<(), Error> {
+    if !(3..=64).contains(&s.chars().count()) {
+        bail!("user ID must be 3 to 64 characters long");
+    }
+    if !PVE_USERID_RE.is_match(s) {
+        bail!("not a valid user ID");
+    }
+    Ok(())
 }
 
 pub fn verify_volume_id(s: &str) -> Result<(), Error> {

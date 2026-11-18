@@ -21832,6 +21832,103 @@ mod update_node_firewall_options_nf_conntrack_helpers {
     }
 }
 
+const_regex! {
+
+UPDATE_ACL_GROUPS_RE = r##"^[A-Za-z0-9\.\-_]+$"##;
+UPDATE_ACL_ROLES_RE = r##"^[A-Za-z0-9\.\-_]+$"##;
+UPDATE_ACL_TOKENS_RE = r##"^[^\s:/]+@[A-Za-z][A-Za-z0-9\.\-_]+![A-Za-z][A-Za-z0-9\.\-_]+$"##;
+
+}
+
+#[test]
+fn test_regex_compilation_44() {
+    use regex::Regex;
+    let _: &Regex = &UPDATE_ACL_GROUPS_RE;
+    let _: &Regex = &UPDATE_ACL_ROLES_RE;
+    let _: &Regex = &UPDATE_ACL_TOKENS_RE;
+}
+#[api(
+    properties: {
+        delete: {
+            default: false,
+            optional: true,
+        },
+        groups: {
+            items: {
+                description: "List item of type pve-groupid.",
+                format: &ApiStringFormat::Pattern(&UPDATE_ACL_GROUPS_RE),
+                type: String,
+            },
+            optional: true,
+            type: Array,
+        },
+        path: {
+            type: String,
+        },
+        propagate: {
+            default: true,
+            optional: true,
+        },
+        roles: {
+            items: {
+                description: "List item of type pve-roleid.",
+                format: &ApiStringFormat::Pattern(&UPDATE_ACL_ROLES_RE),
+                type: String,
+            },
+            type: Array,
+        },
+        tokens: {
+            items: {
+                description: "List item of type pve-tokenid.",
+                format: &ApiStringFormat::Pattern(&UPDATE_ACL_TOKENS_RE),
+                type: String,
+            },
+            optional: true,
+            type: Array,
+        },
+        users: {
+            items: {
+                description: "List item of type pve-userid.",
+                format: &ApiStringFormat::VerifyFn(verifiers::verify_pve_userid),
+                type: String,
+            },
+            optional: true,
+            type: Array,
+        },
+    },
+)]
+/// Object.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct UpdateAcl {
+    /// Remove permissions (instead of adding it).
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete: Option<bool>,
+
+    /// List of groups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groups: Option<Vec<String>>,
+
+    /// Access control path
+    pub path: String,
+
+    /// Allow to propagate (inherit) permissions.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub propagate: Option<bool>,
+
+    /// List of roles.
+    pub roles: Vec<String>,
+
+    /// List of API tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<Vec<String>>,
+
+    /// List of users.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<Vec<String>>,
+}
+
 #[api(
     properties: {
         value: {
@@ -21854,7 +21951,7 @@ UPDATE_CLUSTER_FIREWALL_OPTIONS_DELETE_RE = r##"^(?i:[a-z][a-z0-9_-]+)$"##;
 }
 
 #[test]
-fn test_regex_compilation_44() {
+fn test_regex_compilation_45() {
     use regex::Regex;
     let _: &Regex = &UPDATE_CLUSTER_FIREWALL_OPTIONS_DELETE_RE;
 }
@@ -21948,7 +22045,7 @@ UPDATE_CLUSTER_OPTIONS_MAC_PREFIX_RE = r##"^(?i)[a-f0-9][02468ace](?::[a-f0-9]{2
 }
 
 #[test]
-fn test_regex_compilation_45() {
+fn test_regex_compilation_46() {
     use regex::Regex;
     let _: &Regex = &UPDATE_CLUSTER_OPTIONS_DELETE_RE;
     let _: &Regex = &UPDATE_CLUSTER_OPTIONS_EMAIL_FROM_RE;
@@ -22298,7 +22395,7 @@ UPDATE_GUEST_FIREWALL_OPTIONS_DELETE_RE = r##"^(?i:[a-z][a-z0-9_-]+)$"##;
 }
 
 #[test]
-fn test_regex_compilation_46() {
+fn test_regex_compilation_47() {
     use regex::Regex;
     let _: &Regex = &UPDATE_GUEST_FIREWALL_OPTIONS_DELETE_RE;
 }
@@ -22429,7 +22526,7 @@ UPDATE_LXC_CONFIG_TIMEZONE_RE = r##"^.*/.*$"##;
 }
 
 #[test]
-fn test_regex_compilation_47() {
+fn test_regex_compilation_48() {
     use regex::Regex;
     let _: &Regex = &UPDATE_LXC_CONFIG_DELETE_RE;
     let _: &Regex = &UPDATE_LXC_CONFIG_REVERT_RE;
@@ -22824,7 +22921,7 @@ UPDATE_NODE_CONFIG_DELETE_RE = r##"^(?i:[a-z][a-z0-9_-]+)$"##;
 }
 
 #[test]
-fn test_regex_compilation_48() {
+fn test_regex_compilation_49() {
     use regex::Regex;
     let _: &Regex = &UPDATE_NODE_CONFIG_DELETE_RE;
 }
@@ -22938,7 +23035,7 @@ UPDATE_NODE_FIREWALL_OPTIONS_DELETE_RE = r##"^(?i:[a-z][a-z0-9_-]+)$"##;
 }
 
 #[test]
-fn test_regex_compilation_49() {
+fn test_regex_compilation_50() {
     use regex::Regex;
     let _: &Regex = &UPDATE_NODE_FIREWALL_OPTIONS_DELETE_RE;
 }
@@ -23159,7 +23256,7 @@ UPDATE_QEMU_CONFIG_VMSTATESTORAGE_RE = r##"^(?i:[a-z][a-z0-9\-_.]*[a-z0-9])$"##;
 }
 
 #[test]
-fn test_regex_compilation_50() {
+fn test_regex_compilation_51() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_AFFINITY_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_BOOTDISK_RE;
@@ -24072,7 +24169,7 @@ UPDATE_QEMU_CONFIG_ASYNC_VMSTATESTORAGE_RE = r##"^(?i:[a-z][a-z0-9\-_.]*[a-z0-9]
 }
 
 #[test]
-fn test_regex_compilation_51() {
+fn test_regex_compilation_52() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_ASYNC_AFFINITY_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_ASYNC_BOOTDISK_RE;
@@ -24963,7 +25060,7 @@ UPDATE_QEMU_CONFIG_EFIDISK0_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_52() {
+fn test_regex_compilation_53() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_EFIDISK0_SIZE_RE;
 }
@@ -25048,7 +25145,7 @@ UPDATE_QEMU_CONFIG_IDE_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_53() {
+fn test_regex_compilation_54() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_IDE_MODEL_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_IDE_SERIAL_RE;
@@ -25404,7 +25501,7 @@ UPDATE_QEMU_CONFIG_SATA_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_54() {
+fn test_regex_compilation_55() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_SATA_SERIAL_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_SATA_SIZE_RE;
@@ -25749,7 +25846,7 @@ UPDATE_QEMU_CONFIG_SCSI_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_55() {
+fn test_regex_compilation_56() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_SCSI_SERIAL_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_SCSI_SIZE_RE;
@@ -26149,7 +26246,7 @@ UPDATE_QEMU_CONFIG_TPMSTATE0_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_56() {
+fn test_regex_compilation_57() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_TPMSTATE0_SIZE_RE;
 }
@@ -26212,7 +26309,7 @@ UPDATE_QEMU_CONFIG_VIRTIO_SIZE_RE = r##"^(\d+(\.\d+)?)([KMGT])?$"##;
 }
 
 #[test]
-fn test_regex_compilation_57() {
+fn test_regex_compilation_58() {
     use regex::Regex;
     let _: &Regex = &UPDATE_QEMU_CONFIG_VIRTIO_SERIAL_RE;
     let _: &Regex = &UPDATE_QEMU_CONFIG_VIRTIO_SIZE_RE;

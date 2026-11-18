@@ -3,7 +3,6 @@
 ///
 /// ```text
 /// - /access
-/// - /access/acl
 /// - /access/domains/{realm}
 /// - /access/domains/{realm}/sync
 /// - /access/groups
@@ -1782,6 +1781,11 @@ pub trait PveClient {
     /// Read storage status.
     async fn storage_status(&self, node: &str, storage: &str) -> Result<StorageStatus, Error> {
         Err(Error::Other("storage_status not implemented"))
+    }
+
+    /// Update Access Control List (add or remove permissions).
+    async fn update_acl(&self, params: UpdateAcl) -> Result<(), Error> {
+        Err(Error::Other("update_acl not implemented"))
     }
 
     /// This is used to resynchronize the package index files from their sources
@@ -4293,6 +4297,12 @@ where
             percent_encode(storage.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
         );
         Ok(self.0.get(url).await?.expect_json()?.data)
+    }
+
+    /// Update Access Control List (add or remove permissions).
+    async fn update_acl(&self, params: UpdateAcl) -> Result<(), Error> {
+        let url = "/api2/extjs/access/acl";
+        self.0.put(url, &params).await?.nodata()
     }
 
     /// This is used to resynchronize the package index files from their sources

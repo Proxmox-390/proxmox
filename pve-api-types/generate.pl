@@ -50,8 +50,11 @@ Schema2Rust::register_format('pve-acme-alias' => { code => 'verifiers::verify_pv
 Schema2Rust::register_format('pve-acme-domain' => { code => 'verifiers::verify_pve_acme_domain' });
 Schema2Rust::register_format('pve-bridge-id' => { regex => '^'.$BRIDGEID_RE.'$' });
 Schema2Rust::register_format('pve-configid' => { regex => $CONFIGID_RE });
-## Schema2Rust::register_format('pve-groupid' => { code => 'verify_pve_groupid' });
-Schema2Rust::register_format('pve-userid' => { code => 'verify_pve_userid' });
+# copied from the checks of pve-access-control
+Schema2Rust::register_format('pve-groupid' => { regex => '^[A-Za-z0-9\.\-_]+$' });
+Schema2Rust::register_format('pve-roleid' => { regex => '^[A-Za-z0-9\.\-_]+$' });
+Schema2Rust::register_format('pve-tokenid' => { regex => '^[^\s:/]+@[A-Za-z][A-Za-z0-9\.\-_]+![A-Za-z][A-Za-z0-9\.\-_]+$' });
+Schema2Rust::register_format('pve-userid' => { code => 'verifiers::verify_pve_userid' });
 ## # copied from JSONSchema's verify_pve_node sub:
 Schema2Rust::register_format('pve-node' => { regex => '^(?i:[a-z0-9](?i:[a-z0-9\-]*[a-z0-9])?)$' });
 ## #Schema2Rust::register_format('pve-node' => { code => 'verify_pve_node' });
@@ -433,6 +436,7 @@ Schema2Rust::derive('ListRealm' => 'Clone', 'PartialEq');
 api(POST => '/access/users/{userid}/token/{tokenid}', 'create_token', 'param-name' => 'CreateToken');
 Schema2Rust::derive('CreateToken' => 'Default');
 api(DELETE => '/access/users/{userid}/token/{tokenid}', 'delete_token');
+api(PUT => '/access/acl', 'update_acl', 'param-name' => 'UpdateAcl');
 
 api(GET => '/nodes/{node}/apt/update', 'list_available_updates', 'return-name' => 'AptUpdateInfo');
 api(POST => '/nodes/{node}/apt/update', 'update_apt_database', 'output-type' => 'PveUpid', 'param-name' => 'AptUpdateParams');
