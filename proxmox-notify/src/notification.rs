@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use proxmox_schema::api;
+use proxmox_schema::api_types::{SAFE_ID_REGEX, SAFE_ID_REGEX_STR};
 use proxmox_uuid::Uuid;
 
 use crate::Error;
@@ -196,6 +197,15 @@ impl Notification {
     pub fn recipient(&self) -> &Recipient {
         &self.recipient
     }
+
+    /// Validate this notification.
+    pub fn validate(&self) -> Result<(), Error> {
+        if let Content::Template { template_name, .. } = &self.content {
+            verify_template_name(template_name)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Builder for [`Notification`].
@@ -244,7 +254,7 @@ impl NotificationBuilder {
 
     /// Build the notification, assigning a new unique ID and the current time as timestamp.
     pub fn build(self) -> Result<Notification, Error> {
-        Ok(Notification {
+        let notification = Notification {
             content: self.content?,
             metadata: Metadata {
                 severity: self.severity.unwrap_or(Severity::Unknown),
@@ -253,8 +263,22 @@ impl NotificationBuilder {
             },
             id: Uuid::generate(),
             recipient: self.recipient,
-        })
+        };
+
+        notification.validate()?;
+
+        Ok(notification)
     }
+}
+
+pub(crate) fn verify_template_name(name: &str) -> Result<(), Error> {
+    if !SAFE_ID_REGEX.is_match(name) {
+        return Err(Error::invalid_notification(format!(
+            "template name '{name}' does not match regex '{SAFE_ID_REGEX_STR}'"
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -421,5 +445,31 @@ mod tests {
             let deserialized: Notification = serde_json::from_str(&serialized).unwrap();
             assert_eq!(deserialized, notification);
         }
+    }
+
+    #[test]
+    /// Verify that it is not possible to construct notifications
+    /// with invalid template names.
+    fn invalid_template_name() {
+        assert!(
+            Notification::template_builder("../something", ())
+                .build()
+                .is_err()
+        );
+        assert!(
+            Notification::template_builder("/foo/bar", ())
+                .build()
+                .is_err()
+        );
+        assert!(
+            Notification::template_builder("../../foo/bar", ())
+                .build()
+                .is_err()
+        );
+        assert!(
+            Notification::template_builder("invälid", ())
+                .build()
+                .is_err()
+        );
     }
 }

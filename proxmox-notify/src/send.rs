@@ -21,11 +21,14 @@ use crate::{Config, Context, EmailRecipient, Error, Notification, Recipient};
 ///
 /// Matcher and delivery errors do not fail the call, they are logged and recorded in the returned
 /// [`Receipt`].
+/// Returns an error if the notification fails validation.
 pub fn send(
     context: &Context,
     config: &Config,
     notification: &Notification,
 ) -> Result<Receipt, Error> {
+    notification.validate()?;
+
     let bus = Bus::from_config(config)?;
     Ok(bus.send(context, notification))
 }
