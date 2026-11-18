@@ -5,7 +5,7 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 use crate::Config;
 use crate::api::http_err;
 use crate::api_types::{
-    DeleteableGotifyProperty, GotifyConfig, GotifyConfigUpdater, GotifyPrivateConfig,
+    DeletableGotifyProperty, GotifyConfig, GotifyConfigUpdater, GotifyPrivateConfig,
     GotifyPrivateConfigUpdater,
 };
 use crate::config::{ConfigEntity, PrivateConfigEntity};
@@ -78,7 +78,7 @@ pub fn update_endpoint(
     name: &str,
     endpoint_config_updater: GotifyConfigUpdater,
     private_endpoint_config_updater: GotifyPrivateConfigUpdater,
-    delete: Option<&[DeleteableGotifyProperty]>,
+    delete: Option<&[DeletableGotifyProperty]>,
     digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
@@ -88,8 +88,8 @@ pub fn update_endpoint(
     if let Some(delete) = delete {
         for deletable_property in delete {
             match deletable_property {
-                DeleteableGotifyProperty::Comment => endpoint.comment = None,
-                DeleteableGotifyProperty::Disable => endpoint.disable = None,
+                DeletableGotifyProperty::Comment => endpoint.comment = None,
+                DeletableGotifyProperty::Disable => endpoint.disable = None,
             }
         }
     }
@@ -245,7 +245,7 @@ mod tests {
             "gotify-endpoint",
             Default::default(),
             Default::default(),
-            Some(&[DeleteableGotifyProperty::Comment]),
+            Some(&[DeletableGotifyProperty::Comment]),
             None,
         )?;
 

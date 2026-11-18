@@ -9,7 +9,7 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::api::http_err;
 use crate::api_types::{
-    DeleteableWebhookProperty, KeyAndBase64Val, WebhookConfig, WebhookConfigUpdater,
+    DeletableWebhookProperty, KeyAndBase64Val, WebhookConfig, WebhookConfigUpdater,
     WebhookPrivateConfig,
 };
 use crate::config::{ConfigEntity, PrivateConfigEntity};
@@ -131,7 +131,7 @@ pub fn update_endpoint(
     config: &mut Config,
     name: &str,
     config_updater: WebhookConfigUpdater,
-    delete: Option<&[DeleteableWebhookProperty]>,
+    delete: Option<&[DeletableWebhookProperty]>,
     digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
@@ -147,11 +147,11 @@ pub fn update_endpoint(
     if let Some(delete) = delete {
         for deleteable_property in delete {
             match deleteable_property {
-                DeleteableWebhookProperty::Comment => endpoint.comment = None,
-                DeleteableWebhookProperty::Disable => endpoint.disable = None,
-                DeleteableWebhookProperty::Header => endpoint.header = Vec::new(),
-                DeleteableWebhookProperty::Body => endpoint.body = None,
-                DeleteableWebhookProperty::Secret => {
+                DeletableWebhookProperty::Comment => endpoint.comment = None,
+                DeletableWebhookProperty::Disable => endpoint.disable = None,
+                DeletableWebhookProperty::Header => endpoint.header = Vec::new(),
+                DeletableWebhookProperty::Body => endpoint.body = None,
+                DeletableWebhookProperty::Secret => {
                     config.private_config.insert(
                         name,
                         PrivateConfigEntity::Webhook(WebhookPrivateConfig {
@@ -385,8 +385,8 @@ mod tests {
             "webhook-endpoint",
             Default::default(),
             Some(&[
-                DeleteableWebhookProperty::Comment,
-                DeleteableWebhookProperty::Secret,
+                DeletableWebhookProperty::Comment,
+                DeletableWebhookProperty::Secret,
             ]),
             None,
         )?;

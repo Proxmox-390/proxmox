@@ -151,7 +151,7 @@ pub struct WebhookPrivateConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// Webhook configuration properties that can be deleted.
-pub enum DeleteableWebhookProperty {
+pub enum DeletableWebhookProperty {
     /// Delete `comment`.
     Comment,
     /// Delete `disable`.

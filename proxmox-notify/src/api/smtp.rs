@@ -5,7 +5,7 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 use crate::Config;
 use crate::api::{http_bail, http_err};
 use crate::api_types::{
-    DeleteableSmtpProperty, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
+    DeletableSmtpProperty, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
     SmtpPrivateConfigUpdater,
 };
 use crate::config::{ConfigEntity, PrivateConfigEntity};
@@ -84,7 +84,7 @@ pub fn update_endpoint(
     name: &str,
     updater: SmtpConfigUpdater,
     private_endpoint_config_updater: SmtpPrivateConfigUpdater,
-    delete: Option<&[DeleteableSmtpProperty]>,
+    delete: Option<&[DeletableSmtpProperty]>,
     digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
@@ -94,12 +94,12 @@ pub fn update_endpoint(
     if let Some(delete) = delete {
         for deletable_property in delete {
             match deletable_property {
-                DeleteableSmtpProperty::Author => endpoint.author = None,
-                DeleteableSmtpProperty::Comment => endpoint.comment = None,
-                DeleteableSmtpProperty::Disable => endpoint.disable = None,
-                DeleteableSmtpProperty::Mailto => endpoint.mailto.clear(),
-                DeleteableSmtpProperty::MailtoUser => endpoint.mailto_user.clear(),
-                DeleteableSmtpProperty::Password => {
+                DeletableSmtpProperty::Author => endpoint.author = None,
+                DeletableSmtpProperty::Comment => endpoint.comment = None,
+                DeletableSmtpProperty::Disable => endpoint.disable = None,
+                DeletableSmtpProperty::Mailto => endpoint.mailto.clear(),
+                DeletableSmtpProperty::MailtoUser => endpoint.mailto_user.clear(),
+                DeletableSmtpProperty::Password => {
                     config.private_config.insert(
                         name,
                         PrivateConfigEntity::Smtp(SmtpPrivateConfig {
@@ -108,8 +108,8 @@ pub fn update_endpoint(
                         }),
                     );
                 }
-                DeleteableSmtpProperty::Port => endpoint.port = None,
-                DeleteableSmtpProperty::Username => endpoint.username = None,
+                DeletableSmtpProperty::Port => endpoint.port = None,
+                DeletableSmtpProperty::Username => endpoint.username = None,
             }
         }
     }
@@ -319,11 +319,11 @@ pub mod tests {
             Default::default(),
             Default::default(),
             Some(&[
-                DeleteableSmtpProperty::Author,
-                DeleteableSmtpProperty::MailtoUser,
-                DeleteableSmtpProperty::Port,
-                DeleteableSmtpProperty::Username,
-                DeleteableSmtpProperty::Comment,
+                DeletableSmtpProperty::Author,
+                DeletableSmtpProperty::MailtoUser,
+                DeletableSmtpProperty::Port,
+                DeletableSmtpProperty::Username,
+                DeletableSmtpProperty::Comment,
             ]),
             None,
         )?;

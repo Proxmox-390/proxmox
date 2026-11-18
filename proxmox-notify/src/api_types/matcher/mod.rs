@@ -358,7 +358,7 @@ impl MatcherConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// The set of matcher properties that can be deleted.
-pub enum DeleteableMatcherProperty {
+pub enum DeletableMatcherProperty {
     /// Delete `comment`
     Comment,
     /// Delete `disable`

@@ -4,7 +4,7 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::http_err;
-use crate::api_types::{DeleteableMatcherProperty, MatcherConfig, MatcherConfigUpdater};
+use crate::api_types::{DeletableMatcherProperty, MatcherConfig, MatcherConfigUpdater};
 use crate::config::ConfigEntity;
 
 /// Get a list of all matchers
@@ -97,7 +97,7 @@ pub fn update_matcher(
     config: &mut Config,
     name: &str,
     matcher_updater: MatcherConfigUpdater,
-    delete: Option<&[DeleteableMatcherProperty]>,
+    delete: Option<&[DeletableMatcherProperty]>,
     digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
@@ -108,19 +108,19 @@ pub fn update_matcher(
         for deletable_property in delete {
             match deletable_property {
                 #[cfg(feature = "legacy-matchers")]
-                DeleteableMatcherProperty::MatchSeverity => matcher.match_severity.clear(),
+                DeletableMatcherProperty::MatchSeverity => matcher.match_severity.clear(),
                 #[cfg(feature = "legacy-matchers")]
-                DeleteableMatcherProperty::MatchField => matcher.match_field.clear(),
+                DeletableMatcherProperty::MatchField => matcher.match_field.clear(),
                 #[cfg(feature = "legacy-matchers")]
-                DeleteableMatcherProperty::MatchCalendar => matcher.match_calendar.clear(),
+                DeletableMatcherProperty::MatchCalendar => matcher.match_calendar.clear(),
                 #[cfg(feature = "legacy-matchers")]
-                DeleteableMatcherProperty::InvertMatch => matcher.invert_match = None,
+                DeletableMatcherProperty::InvertMatch => matcher.invert_match = None,
                 #[cfg(feature = "legacy-matchers")]
-                DeleteableMatcherProperty::Mode => matcher.mode = None,
-                DeleteableMatcherProperty::Expression => matcher.expression = None,
-                DeleteableMatcherProperty::Comment => matcher.comment = None,
-                DeleteableMatcherProperty::Target => matcher.target.clear(),
-                DeleteableMatcherProperty::Disable => matcher.disable = None,
+                DeletableMatcherProperty::Mode => matcher.mode = None,
+                DeletableMatcherProperty::Expression => matcher.expression = None,
+                DeletableMatcherProperty::Comment => matcher.comment = None,
+                DeletableMatcherProperty::Target => matcher.target.clear(),
+                DeletableMatcherProperty::Disable => matcher.disable = None,
             }
         }
     }
@@ -283,11 +283,11 @@ matcher: matcher2
             "matcher1",
             Default::default(),
             Some(&[
-                DeleteableMatcherProperty::InvertMatch,
-                DeleteableMatcherProperty::Mode,
-                DeleteableMatcherProperty::MatchField,
-                DeleteableMatcherProperty::Target,
-                DeleteableMatcherProperty::Comment,
+                DeletableMatcherProperty::InvertMatch,
+                DeletableMatcherProperty::Mode,
+                DeletableMatcherProperty::MatchField,
+                DeletableMatcherProperty::Target,
+                DeletableMatcherProperty::Comment,
             ]),
             Some(digest),
         )?;
@@ -334,9 +334,9 @@ matcher: matcher2
             "matcher1",
             Default::default(),
             Some(&[
-                DeleteableMatcherProperty::Target,
-                DeleteableMatcherProperty::Comment,
-                DeleteableMatcherProperty::Expression,
+                DeletableMatcherProperty::Target,
+                DeletableMatcherProperty::Comment,
+                DeletableMatcherProperty::Expression,
             ]),
             Some(digest),
         )?;

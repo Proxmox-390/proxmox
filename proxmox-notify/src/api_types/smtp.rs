@@ -102,7 +102,7 @@ pub struct SmtpConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// The set of properties that can be deleted from a smtp endpoint configuration.
-pub enum DeleteableSmtpProperty {
+pub enum DeletableSmtpProperty {
     /// Delete `author`
     Author,
     /// Delete `comment`

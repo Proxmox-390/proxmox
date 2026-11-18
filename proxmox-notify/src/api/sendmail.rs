@@ -4,7 +4,7 @@ use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::{http_bail, http_err};
-use crate::api_types::{DeleteableSendmailProperty, SendmailConfig, SendmailConfigUpdater};
+use crate::api_types::{DeletableSendmailProperty, SendmailConfig, SendmailConfigUpdater};
 use crate::config::ConfigEntity;
 
 /// Get a list of all sendmail endpoints.
@@ -67,7 +67,7 @@ pub fn update_endpoint(
     config: &mut Config,
     name: &str,
     updater: SendmailConfigUpdater,
-    delete: Option<&[DeleteableSendmailProperty]>,
+    delete: Option<&[DeletableSendmailProperty]>,
     digest: Option<ConfigDigest>,
 ) -> Result<(), HttpError> {
     super::verify_digest(config, digest)?;
@@ -77,12 +77,12 @@ pub fn update_endpoint(
     if let Some(delete) = delete {
         for deletable_property in delete {
             match deletable_property {
-                DeleteableSendmailProperty::FromAddress => endpoint.from_address = None,
-                DeleteableSendmailProperty::Author => endpoint.author = None,
-                DeleteableSendmailProperty::Comment => endpoint.comment = None,
-                DeleteableSendmailProperty::Mailto => endpoint.mailto.clear(),
-                DeleteableSendmailProperty::MailtoUser => endpoint.mailto_user.clear(),
-                DeleteableSendmailProperty::Disable => endpoint.disable = None,
+                DeletableSendmailProperty::FromAddress => endpoint.from_address = None,
+                DeletableSendmailProperty::Author => endpoint.author = None,
+                DeletableSendmailProperty::Comment => endpoint.comment = None,
+                DeletableSendmailProperty::Mailto => endpoint.mailto.clear(),
+                DeletableSendmailProperty::MailtoUser => endpoint.mailto_user.clear(),
+                DeletableSendmailProperty::Disable => endpoint.disable = None,
             }
         }
     }
@@ -256,8 +256,8 @@ pub mod tests {
             "sendmail-endpoint",
             Default::default(),
             Some(&[
-                DeleteableSendmailProperty::FromAddress,
-                DeleteableSendmailProperty::Author,
+                DeletableSendmailProperty::FromAddress,
+                DeletableSendmailProperty::Author,
             ]),
             None,
         )?;

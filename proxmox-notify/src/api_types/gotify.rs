@@ -62,7 +62,7 @@ pub struct GotifyPrivateConfig {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 /// The set of properties that can be deleted from a gotify endpoint configuration.
-pub enum DeleteableGotifyProperty {
+pub enum DeletableGotifyProperty {
     /// Delete `comment`
     Comment,
     /// Delete `disable`
