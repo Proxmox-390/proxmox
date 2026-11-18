@@ -32,6 +32,20 @@ matcher: default-matcher
     comment Route all notifications to mail-to-root
 ";
 
+/// Check whether pmxcfs is mounted at `base_dir`, by the same means as
+/// `PVE::Cluster::check_cfs_is_mounted`.
+fn is_pmxcfs_mounted(base_dir: &Path) -> bool {
+    base_dir.join("local").is_symlink()
+}
+
+fn ensure_pmxcfs_mounted() -> Result<(), BoxedError> {
+    if !is_pmxcfs_mounted(Path::new("/etc/pve")) {
+        return Err("pmxcfs is not mounted at /etc/pve".into());
+    }
+
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct PVEContext;
 
@@ -90,11 +104,17 @@ impl ContextImpl for PVEContext {
     }
 
     fn read_config(&self) -> Result<Config, BoxedError> {
+        // Without pmxcfs, /etc/pve is an empty directory, which must not be mistaken for a node
+        // without any notification configuration.
+        ensure_pmxcfs_mounted()?;
+
         let raw_config = proxmox_sys::fs::file_read_optional_string("/etc/pve/notifications.cfg")?
             .unwrap_or_default();
         let raw_private_config =
             proxmox_sys::fs::file_read_optional_string("/etc/pve/priv/notifications.cfg")?
                 .unwrap_or_default();
+
+        ensure_pmxcfs_mounted()?;
 
         let config = Config::parse_section_config(
             &raw_config,
@@ -129,6 +149,19 @@ user:no-mail@pve:1:0::::::
             Some("test@example.com".to_string())
         );
         assert_eq!(lookup_mail_address(USER_CONFIG, "no-mail@pve"), None);
+    }
+
+    #[test]
+    fn test_pmxcfs_mounted() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_pmxcfs_mounted(dir.path()));
+
+        std::fs::create_dir(dir.path().join("local")).unwrap();
+        assert!(!is_pmxcfs_mounted(dir.path()));
+        std::fs::remove_dir(dir.path().join("local")).unwrap();
+
+        std::os::unix::fs::symlink("nodes/foo", dir.path().join("local")).unwrap();
+        assert!(is_pmxcfs_mounted(dir.path()));
     }
 
     const DC_CONFIG: &str = "
