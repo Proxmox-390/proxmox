@@ -226,7 +226,7 @@ mod test_helpers {
     #[allow(unused)]
     pub fn empty_config() -> Config {
         let context = test::test_context();
-        Config::new(&context, "", "").unwrap()
+        Config::parse_section_config(&context, "", "").unwrap()
     }
 }
 

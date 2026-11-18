@@ -214,12 +214,12 @@ mod tests {
 
     fn empty_config() -> Config {
         let context = test_context();
-        Config::new(&context, "", "").unwrap()
+        Config::parse_section_config(&context, "", "").unwrap()
     }
 
     fn config_with_two_matchers() -> Config {
         let context = test_context();
-        Config::new(
+        Config::parse_section_config(
             &context,
             "
 sendmail: foo
@@ -501,9 +501,10 @@ matcher: matcher2
 
         // The normalized expression should stay the same after
         // a read/write cycle of the config
-        let (raw_config, raw_private_config) = config.write().unwrap();
+        let (raw_config, raw_private_config) = config.to_section_config().unwrap();
         let context = test_context();
-        let config = Config::new(&context, &raw_config, &raw_private_config).unwrap();
+        let config =
+            Config::parse_section_config(&context, &raw_config, &raw_private_config).unwrap();
         let matcher = get_matcher(&config, "matcher1")?;
 
         assert_eq!(matcher.expression, Some(stored));

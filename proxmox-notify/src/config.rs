@@ -137,8 +137,8 @@ pub struct Config {
 }
 
 impl Config {
-    /// Parse raw config
-    pub fn new(
+    /// Parse notification configuration from section config format.
+    pub fn parse_section_config(
         context: &Context,
         raw_config: &str,
         raw_private_config: &str,
@@ -203,7 +203,7 @@ impl Config {
     }
 
     /// Serialize config
-    pub fn write(&self) -> Result<(String, String), Error> {
+    pub fn to_section_config(&self) -> Result<(String, String), Error> {
         let mut c = self.config.clone();
         for (_, (_, value)) in c.sections.iter_mut() {
             // Remove 'origin' parameter, we do not want it in our
