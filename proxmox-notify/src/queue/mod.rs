@@ -16,6 +16,11 @@ mod consumer;
 #[cfg(feature = "queue-worker")]
 pub use consumer::QueueConsumer;
 
+#[cfg(feature = "queue-worker")]
+mod worker;
+#[cfg(feature = "queue-worker")]
+pub use worker::{QueueWorker, QueueWorkerBuilder};
+
 /// Maximum size of a queued notification file.
 ///
 /// Well above what legitimate producers submit, e.g. forwarded mails or backup logs limited to
