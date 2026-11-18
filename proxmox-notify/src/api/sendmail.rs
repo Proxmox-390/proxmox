@@ -230,7 +230,7 @@ pub mod tests {
         let mut config = empty_config();
         add_sendmail_endpoint_for_test(&mut config, "sendmail-endpoint")?;
 
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         update_endpoint(
             &mut config,

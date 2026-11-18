@@ -289,7 +289,7 @@ pub mod tests {
         let mut config = empty_config();
         add_smtp_endpoint_for_test(&mut config, "smtp-endpoint")?;
 
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         update_endpoint(
             &mut config,

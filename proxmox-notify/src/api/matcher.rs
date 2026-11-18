@@ -270,7 +270,7 @@ matcher: matcher2
 
         let mut config = config_with_two_matchers();
 
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         update_matcher(
             &mut config,
@@ -327,7 +327,7 @@ matcher: matcher2
     fn test_matcher_update() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
 
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         update_matcher(
             &mut config,
@@ -382,7 +382,7 @@ matcher: matcher2
     #[cfg(feature = "legacy-matchers")]
     fn test_update_matcher_mutually_exclusive_with_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         let proto = MatcherConfigUpdater {
             expression: Some(valid_expression_string()),
@@ -416,7 +416,7 @@ matcher: matcher2
     #[test]
     fn test_update_invalid_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         assert!(
             update_matcher(
@@ -447,7 +447,7 @@ matcher: matcher2
     #[test]
     fn test_update_minifies_pretty_printed_expression() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         let expr = nested_expression();
         let pretty = serde_json::to_string_pretty(&expr).unwrap();
@@ -476,7 +476,7 @@ matcher: matcher2
     #[test]
     fn test_update_normalizes_expression_with_extra_whitespace() -> Result<(), HttpError> {
         let mut config = config_with_two_matchers();
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         // Same expression as `nested_expression`, but handwritten, with all sorts of
         // odd whitespace characters.

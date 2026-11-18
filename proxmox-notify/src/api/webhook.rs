@@ -351,7 +351,7 @@ mod tests {
         let mut config = empty_config();
         add_default_webhook_endpoint(&mut config)?;
 
-        let digest = config.digest.clone();
+        let digest = config.digest().clone();
 
         update_endpoint(
             &mut config,
