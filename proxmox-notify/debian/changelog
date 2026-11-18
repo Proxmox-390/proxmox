@@ -1,3 +1,52 @@
+rust-proxmox-notify (3.0.0-1) trixie; urgency=medium
+
+  * rework the crate in preparation for its use in Proxmox Datacenter Manager.
+    This breaks the API for all users of the crate:
+    - pass the product context explicitly instead of setting it once globally.
+    - replace the per-endpoint features with 'send-impl', 'api-impl' and
+      'api-types'; the latter also builds for wasm32, for use in a Rust-based
+      UI. The 'mail-forwarder' feature is part of 'send-impl' now.
+    - move the API types to the 'api_types' module and rename the Deleteable*
+      types to Deletable*.
+    - use typed section config data and ConfigDigest, and parse the built-in
+      configuration only once.
+    - rework the error type.
+    - create notifications through builders, which also set the recipient:
+      the matchers, a single target, or a list of email addresses. The latter
+      two replace the 'test_target' API and the custom configuration that the
+      legacy-sendmail mode had to build.
+
+  * return a receipt when sending a notification, recording the result of each
+    matcher and the delivery status of each target, instead of only logging
+    errors.
+
+  * only accept template names that are valid identifiers, as other names
+    could read files outside the template directories.
+
+  * add a file-based notification queue and a worker that sends the queued
+    notifications. This allows unprivileged processes to send notifications
+    and keeps callers from blocking on slow targets. A notification whose
+    sending got interrupted, for example by a crash, is sent again up to a
+    configurable number of times.
+
+  * queue: create queued files read-only for other submitters and document the
+    expected setup of the queue directory, which the worker checks at startup,
+    so that unprivileged submitters cannot modify or remove notifications
+    submitted by root.
+
+  * queue: warn if the queue stays locked by another process for five minutes,
+    and leave notifications alone that are queued more than once instead of
+    letting one overwrite the other.
+
+  * receipts: record the addresses of notifications sent to email addresses
+    directly, instead of a placeholder target name.
+
+  * pve context: do not read the configuration while pmxcfs is not mounted, so
+    that queued notifications are not handled with the built-in configuration
+    alone.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 21:36:54 +0100
+
 rust-proxmox-notify (2.0.1-1) trixie; urgency=medium
 
   * fix #7814: smtp: normalize the line endings of forwarded mails to CRLF, as
