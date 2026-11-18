@@ -51,7 +51,7 @@ impl FromStr for Severity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Content {
     /// Title and body will be rendered as a template
@@ -69,7 +69,7 @@ pub enum Content {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub struct Metadata {
     /// Notification severity
@@ -80,7 +80,7 @@ pub struct Metadata {
     pub(crate) additional_fields: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Notification which can be sent
 pub struct Notification {
