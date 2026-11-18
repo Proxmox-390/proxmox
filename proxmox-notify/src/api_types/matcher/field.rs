@@ -231,10 +231,13 @@ pub mod inline {
         #[test]
         fn test_matching() {
             let mut fields = HashMap::new();
-            fields.insert("foo".into(), "bar".into());
+            fields.insert("foo".to_string(), "bar".to_string());
 
-            let notification =
-                Notification::from_template(Severity::Notice, "test", Value::Null, fields);
+            let notification = Notification::template_builder("test", Value::Null)
+                .fields(fields)
+                .severity(Severity::Notice)
+                .build()
+                .unwrap();
 
             let matcher: InlineFieldMatcher = "exact:foo=bar".parse().unwrap();
             assert!(matcher.matches(&notification).unwrap());
@@ -249,17 +252,23 @@ pub mod inline {
             assert!(matcher.matches(&notification).unwrap());
 
             let mut fields = HashMap::new();
-            fields.insert("foo".into(), "test".into());
+            fields.insert("foo".to_string(), "test".to_string());
 
-            let notification =
-                Notification::from_template(Severity::Notice, "test", Value::Null, fields);
+            let notification = Notification::template_builder("test", Value::Null)
+                .fields(fields)
+                .severity(Severity::Notice)
+                .build()
+                .unwrap();
             assert!(matcher.matches(&notification).unwrap());
 
             let mut fields = HashMap::new();
-            fields.insert("foo".into(), "notthere".into());
+            fields.insert("foo".to_string(), "notthere".to_string());
 
-            let notification =
-                Notification::from_template(Severity::Notice, "test", Value::Null, fields);
+            let notification = Notification::template_builder("test", Value::Null)
+                .fields(fields)
+                .severity(Severity::Notice)
+                .build()
+                .unwrap();
             assert!(!matcher.matches(&notification).unwrap());
 
             assert!("regex:'3=b.*".parse::<InlineFieldMatcher>().is_err());

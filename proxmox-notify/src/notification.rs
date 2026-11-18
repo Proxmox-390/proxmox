@@ -133,42 +133,38 @@ pub struct Notification {
 }
 
 impl Notification {
-    pub fn from_template<S: AsRef<str>>(
-        severity: Severity,
+    /// Create a builder for a notification that is rendered from a template.
+    pub fn template_builder<S: Into<String>, D: Serialize>(
         template_name: S,
-        template_data: Value,
-        fields: HashMap<String, String>,
-    ) -> Self {
-        Self {
-            metadata: Metadata {
-                severity,
-                additional_fields: fields,
-                timestamp: proxmox_time::epoch_i64(),
-            },
-            content: Content::Template {
-                template_name: template_name.as_ref().to_string(),
-                data: template_data,
-            },
-            id: Uuid::generate(),
-            recipient: Recipient::Matcher,
+        template_data: D,
+    ) -> NotificationBuilder {
+        let template_name = template_name.into();
+
+        let content = serde_json::to_value(template_data)
+            .map_err(|err| {
+                Error::invalid_notification_with_source("could not serialize template data", err)
+            })
+            .map(move |value| Content::Template {
+                template_name,
+                data: value,
+            });
+
+        NotificationBuilder {
+            severity: None,
+            content,
+            fields: Default::default(),
+            recipient: Default::default(),
         }
     }
 
-    pub fn new_forwarded_mail(
-        severity: Severity,
-        raw_mail: Vec<u8>,
-        fields: HashMap<String, String>,
-    ) -> Result<Self, Error> {
-        Ok(Self {
-            content: Content::ForwardedMail { raw: raw_mail },
-            metadata: Metadata {
-                severity,
-                additional_fields: fields,
-                timestamp: proxmox_time::epoch_i64(),
-            },
-            id: Uuid::generate(),
-            recipient: Recipient::Matcher,
-        })
+    /// Create a builder for a notification that forwards a raw mail.
+    pub fn forwarded_mail_builder(raw_mail: Vec<u8>) -> NotificationBuilder {
+        NotificationBuilder {
+            severity: None,
+            content: Ok(Content::ForwardedMail { raw: raw_mail }),
+            fields: Default::default(),
+            recipient: Default::default(),
+        }
     }
 
     /// Return the unique ID of this notification.
@@ -199,6 +195,65 @@ impl Notification {
     /// Return the recipient of the notification.
     pub fn recipient(&self) -> &Recipient {
         &self.recipient
+    }
+}
+
+/// Builder for [`Notification`].
+///
+/// Created via [`Notification::template_builder`] or [`Notification::forwarded_mail_builder`].
+#[derive(Debug)]
+pub struct NotificationBuilder {
+    severity: Option<Severity>,
+    content: Result<Content, Error>,
+    fields: HashMap<String, String>,
+    recipient: Recipient,
+}
+
+impl NotificationBuilder {
+    /// Set the severity of the notification.
+    ///
+    /// If not set, the severity will default to [`Severity::Unknown`].
+    pub fn severity(mut self, severity: Severity) -> Self {
+        self.severity = Some(severity);
+        self
+    }
+
+    /// Add a single metadata field, replacing any previous value for the same key.
+    pub fn field<K: Into<String>, V: Into<String>>(mut self, key: K, value: V) -> Self {
+        self.fields.insert(key.into(), value.into());
+        self
+    }
+
+    /// Add multiple metadata fields, replacing any previous values for the same keys.
+    pub fn fields<I, K, V>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.fields
+            .extend(fields.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
+    /// Set the recipient of the notification. Defaults to [`Recipient::Matcher`].
+    pub fn recipient(mut self, recipient: Recipient) -> Self {
+        self.recipient = recipient;
+        self
+    }
+
+    /// Build the notification, assigning a new unique ID and the current time as timestamp.
+    pub fn build(self) -> Result<Notification, Error> {
+        Ok(Notification {
+            content: self.content?,
+            metadata: Metadata {
+                severity: self.severity.unwrap_or(Severity::Unknown),
+                timestamp: proxmox_time::epoch_i64(),
+                additional_fields: self.fields,
+            },
+            id: Uuid::generate(),
+            recipient: self.recipient,
+        })
     }
 }
 
@@ -249,15 +304,29 @@ mod tests {
     }
 
     #[test]
-    fn from_template() {
-        let fields = HashMap::from([("hostname".to_string(), "pve".to_string())]);
+    fn template_builder() {
         let data = json!({"key": "value"});
 
-        let notification =
-            Notification::from_template(Severity::Warning, "test", data.clone(), fields.clone());
+        let notification = Notification::template_builder("test", data.clone())
+            .severity(Severity::Error)
+            .field("hostname", "pve")
+            .fields([("type", "vzdump"), ("hostname", "pbs")])
+            .recipient(Recipient::Target("mail-to-root".into()))
+            .build()
+            .unwrap();
 
-        assert_eq!(notification.severity(), Severity::Warning);
-        assert_eq!(notification.fields(), &fields);
+        assert_eq!(notification.severity(), Severity::Error);
+        assert_eq!(
+            notification.fields(),
+            &HashMap::from([
+                ("hostname".to_string(), "pbs".to_string()),
+                ("type".to_string(), "vzdump".to_string()),
+            ])
+        );
+        assert_eq!(
+            notification.recipient,
+            Recipient::Target("mail-to-root".into())
+        );
         assert_eq!(
             notification.content,
             Content::Template {
@@ -268,22 +337,24 @@ mod tests {
     }
 
     #[test]
-    fn new_forwarded_mail() {
+    fn forwarded_mail_builder() {
         let raw = TEST_MAIL.to_vec();
 
-        let notification =
-            Notification::new_forwarded_mail(Severity::Unknown, raw.clone(), HashMap::new())
-                .unwrap();
+        let notification = Notification::forwarded_mail_builder(raw.clone())
+            .build()
+            .unwrap();
 
         assert_eq!(notification.severity(), Severity::Unknown);
         assert!(notification.fields().is_empty());
+        assert_eq!(notification.recipient, Recipient::Matcher);
         assert_eq!(notification.content, Content::ForwardedMail { raw });
     }
 
     #[test]
     fn fields_mut() {
-        let mut notification =
-            Notification::from_template(Severity::Info, "test", Value::Null, HashMap::new());
+        let mut notification = Notification::template_builder("test", Value::Null)
+            .build()
+            .unwrap();
 
         notification
             .fields_mut()
@@ -331,9 +402,17 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let fields = HashMap::from([("hostname".to_string(), "pve".to_string())]);
+
         let notifications = [
-            Notification::from_template(Severity::Error, "test", json!({"a": [1, 2]}), fields),
-            Notification::new_forwarded_mail(Severity::Info, TEST_MAIL.to_vec(), HashMap::new())
+            Notification::template_builder("test", json!({"a": [1, 2]}))
+                .severity(Severity::Info)
+                .fields(fields.clone())
+                .build()
+                .unwrap(),
+            Notification::forwarded_mail_builder(TEST_MAIL.to_vec())
+                .severity(Severity::Unknown)
+                .fields(fields)
+                .build()
                 .unwrap(),
         ];
 

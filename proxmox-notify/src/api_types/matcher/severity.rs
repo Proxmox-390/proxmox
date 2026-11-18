@@ -103,12 +103,10 @@ pub mod inline {
 
         #[test]
         fn test_severities() {
-            let notification = Notification::from_template(
-                Severity::Notice,
-                "test",
-                Value::Null,
-                Default::default(),
-            );
+            let notification = Notification::template_builder("test", Value::Null)
+                .severity(Severity::Notice)
+                .build()
+                .unwrap();
 
             let matcher: InlineSeverityMatcher = "info,notice,warning,error".parse().unwrap();
             assert!(matcher.matches(&notification).unwrap());

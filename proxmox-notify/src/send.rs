@@ -308,12 +308,10 @@ mod tests {
         // Send directly to endpoint
         bus.send(
             &context,
-            &Notification::from_template(
-                Severity::Info,
-                "test",
-                Default::default(),
-                Default::default(),
-            ),
+            &Notification::template_builder("test", None::<()>)
+                .severity(Severity::Info)
+                .build()
+                .unwrap(),
         );
         let messages = mock.messages();
         assert_eq!(messages.len(), 1);
@@ -358,12 +356,10 @@ mod tests {
         });
 
         let send_with_severity = |severity| {
-            let notification = Notification::from_template(
-                severity,
-                "test",
-                Default::default(),
-                Default::default(),
-            );
+            let notification = Notification::template_builder("test", None::<()>)
+                .severity(severity)
+                .build()
+                .unwrap();
 
             bus.send(&context, &notification);
         };

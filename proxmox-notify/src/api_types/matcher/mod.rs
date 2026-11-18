@@ -395,8 +395,10 @@ mod tests {
         use crate::Severity;
         use serde_json::Value;
 
-        let notification =
-            Notification::from_template(Severity::Notice, "test", Value::Null, Default::default());
+        let notification = Notification::template_builder("test", Value::Null)
+            .severity(Severity::Notice)
+            .build()
+            .unwrap();
 
         for mode in [MatchModeOperator::All, MatchModeOperator::Any] {
             let config = MatcherConfig {

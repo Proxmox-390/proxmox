@@ -38,6 +38,15 @@ pub enum Error {
     #[error("SMTP request failed: {0}")]
     SmtpError(#[source] BoxedError),
 
+    /// A notification passed to proxmox_notify is invalid.
+    #[error("notification is invalid: {err}", err = print_optional_error(.message, .source))]
+    InvalidNotification {
+        /// Description of the error.
+        message: String,
+        /// Underlying error, if any.
+        source: Option<BoxedError>,
+    },
+
     /// A mail message to be forwarded could not be parsed or rebuilt.
     #[error("forwarded email message is invalid: {err}", err = print_optional_error(.message, .source))]
     InvalidForwardedMessage {
@@ -122,6 +131,25 @@ impl Error {
         source: impl Into<BoxedError>,
     ) -> Self {
         Self::InvalidConfig {
+            message: s.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// Create an [`Error::InvalidNotification`] without an underlying error.
+    pub(crate) fn invalid_notification(s: impl Into<String>) -> Self {
+        Self::InvalidNotification {
+            message: s.into(),
+            source: None,
+        }
+    }
+
+    /// Create an [`Error::InvalidNotification`] with an underlying error.
+    pub(crate) fn invalid_notification_with_source(
+        s: impl Into<String>,
+        source: impl Into<BoxedError>,
+    ) -> Self {
+        Self::InvalidNotification {
             message: s.into(),
             source: Some(source.into()),
         }

@@ -149,8 +149,10 @@ mod test {
 
     #[test]
     fn test_calendar_matcher() {
-        let mut notification =
-            Notification::from_template(Severity::Notice, "test", Value::Null, Default::default());
+        let mut notification = Notification::template_builder("test", Value::Null)
+            .severity(Severity::Notice)
+            .build()
+            .unwrap();
 
         // Fr 22 Mai 2026 12:45:00 CEST
         notification.metadata.timestamp = 1779446700;

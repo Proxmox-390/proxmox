@@ -309,18 +309,11 @@ fn handlebars_escape(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
     use crate::{Severity, api_types::KeyAndBase64Val, context::test};
 
     #[test]
     fn test_build_request() {
-        let data = HashMap::from_iter([
-            ("hello".into(), "hello world".into()),
-            ("test".into(), "escaped\nstring".into()),
-        ]);
-
         let body_template = r#"
 {{ fields.test }}
 {{ escape fields.test }}
@@ -365,7 +358,12 @@ hello%20world
             },
         };
 
-        let notification = Notification::from_template(Severity::Info, "foo", json!({}), data);
+        let notification = Notification::template_builder("foo", json!({}))
+            .severity(Severity::Info)
+            .field("hello", "hello world")
+            .field("test", "escaped\nstring")
+            .build()
+            .unwrap();
 
         let context = test::test_context();
 
