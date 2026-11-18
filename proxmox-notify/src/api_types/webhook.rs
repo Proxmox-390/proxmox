@@ -73,7 +73,7 @@ impl From<HttpMethod> for &str {
         },
     }
 )]
-#[derive(Serialize, Deserialize, Updater, Default, Clone)]
+#[derive(Serialize, Deserialize, Updater, Default, Clone, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Config for Webhook notification endpoints
 pub struct WebhookConfig {
@@ -165,7 +165,7 @@ pub enum DeleteableWebhookProperty {
 }
 
 #[api]
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 /// Datatype used to represent key-value pairs, the value
 /// being encoded in base64.
 pub struct KeyAndBase64Val {

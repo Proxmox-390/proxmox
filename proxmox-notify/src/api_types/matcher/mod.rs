@@ -23,7 +23,7 @@ pub const MATCHER_TYPENAME: &str = "matcher";
 
 #[api]
 #[cfg(feature = "legacy-matchers")]
-#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// The mode in which the results of matches are combined.
 pub enum MatchModeOperator {
@@ -75,7 +75,7 @@ pub enum MatchModeOperator {
             optional: true,
         },
     })]
-#[derive(Clone, Debug, Serialize, Deserialize, Updater, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Updater, Default, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Config for notification matchers.
 pub struct MatcherConfig {

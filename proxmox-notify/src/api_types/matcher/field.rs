@@ -29,6 +29,29 @@ impl From<FieldMatcher> for Expression<NotificationMatcher> {
     }
 }
 
+// `Regex` does not implement `PartialEq`, so compare the regex patterns instead.
+impl PartialEq for FieldMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Exact { field, values },
+                Self::Exact {
+                    field: other_field,
+                    values: other_values,
+                },
+            ) => field == other_field && values == other_values,
+            (
+                Self::Regex { field, regex },
+                Self::Regex {
+                    field: other_field,
+                    regex: other_regex,
+                },
+            ) => field == other_field && regex.as_str() == other_regex.as_str(),
+            _ => false,
+        }
+    }
+}
+
 impl MatchDirective for FieldMatcher {
     fn matches(&self, notification: &Notification) -> Result<bool, Error> {
         Ok(match self {
@@ -99,7 +122,7 @@ pub mod inline {
     /// Check if the notification metadata fields match
     /// This is a wrapper that serializes into an inline format that can be used
     /// in a section config key-value pair.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq)]
     pub struct InlineFieldMatcher(FieldMatcher);
 
     impl MatchDirective for InlineFieldMatcher {

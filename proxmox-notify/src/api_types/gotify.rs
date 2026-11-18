@@ -19,7 +19,7 @@ pub const GOTIFY_TYPENAME: &str = "gotify";
         },
     }
 )]
-#[derive(Serialize, Deserialize, Updater, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Updater, Default, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Config for Gotify notification endpoints
 pub struct GotifyConfig {

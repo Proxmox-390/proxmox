@@ -33,7 +33,7 @@ pub const SENDMAIL_TYPENAME: &str = "sendmail";
         },
     },
 )]
-#[derive(Debug, Serialize, Deserialize, Updater, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Updater, Default, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Config for Sendmail notification endpoints
 pub struct SendmailConfig {

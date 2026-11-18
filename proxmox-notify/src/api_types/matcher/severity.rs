@@ -6,7 +6,7 @@ use crate::{Error, Notification, Severity, api_types::expression::NotificationMa
 use super::MatchDirective;
 
 /// Match severity of the notification.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SeverityMatcher {
     pub(crate) severities: Vec<Severity>,
 }
@@ -44,7 +44,7 @@ pub mod inline {
     ///
     /// This is a wrapper that serializes into an inline format that can be used
     /// in a section config key-value pair.
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq)]
     pub struct InlineSeverityMatcher(SeverityMatcher);
 
     /// Common trait implemented by all matching directives

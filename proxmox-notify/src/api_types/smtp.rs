@@ -9,7 +9,7 @@ use super::schema::{EMAIL_SCHEMA, ENTITY_NAME_SCHEMA, USER_SCHEMA};
 pub const SMTP_TYPENAME: &str = "smtp";
 
 #[api]
-#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Connection security
 pub enum SmtpMode {
@@ -48,7 +48,7 @@ pub enum SmtpMode {
         },
     },
 )]
-#[derive(Debug, Serialize, Deserialize, Updater, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Updater, Default, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Config for SMTP notification endpoints
 pub struct SmtpConfig {
