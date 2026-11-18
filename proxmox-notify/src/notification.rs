@@ -114,6 +114,9 @@ pub struct EmailRecipient {
     pub author: Option<String>,
 }
 
+// NOTE: This type is serialized on disk as part of the notification queue and
+// notification history, any changes to the type must be kept backwards-compatible (only add
+// optional fields or fields which have a default value).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Notification which can be sent
