@@ -2,7 +2,6 @@
 #![deny(unsafe_code)]
 
 use std::collections::HashMap;
-use std::error::Error as StdError;
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -26,71 +25,8 @@ pub mod endpoints;
 pub mod renderer;
 pub mod schema;
 
-#[derive(Debug)]
-pub enum Error {
-    /// There was an error serializing the config
-    ConfigSerialization(Box<dyn StdError + Send + Sync>),
-    /// There was an error deserializing the config
-    ConfigDeserialization(Box<dyn StdError + Send + Sync>),
-    /// An endpoint failed to send a notification
-    NotifyFailed(String, Box<dyn StdError + Send + Sync>),
-    /// A target does not exist
-    TargetDoesNotExist(String),
-    /// Testing one or more notification targets failed
-    TargetTestFailed(Vec<Box<dyn StdError + Send + Sync>>),
-    /// A filter could not be applied
-    FilterFailed(String),
-    /// The notification's template string could not be rendered
-    RenderError(Box<dyn StdError + Send + Sync>),
-    /// Generic error for anything else
-    Generic(String),
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::ConfigSerialization(err) => {
-                write!(f, "could not serialize configuration: {err}")
-            }
-            Error::ConfigDeserialization(err) => {
-                write!(f, "could not deserialize configuration: {err}")
-            }
-            Error::NotifyFailed(endpoint, err) => {
-                write!(f, "could not notify via endpoint(s): {endpoint}: {err}")
-            }
-            Error::TargetDoesNotExist(target) => {
-                write!(f, "notification target '{target}' does not exist")
-            }
-            Error::TargetTestFailed(errs) => {
-                for err in errs {
-                    writeln!(f, "{err}")?;
-                }
-
-                Ok(())
-            }
-            Error::FilterFailed(message) => {
-                write!(f, "could not apply filter: {message}")
-            }
-            Error::RenderError(err) => write!(f, "could not render notification template: {err}"),
-            Error::Generic(message) => f.write_str(message),
-        }
-    }
-}
-
-impl StdError for Error {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            Error::ConfigSerialization(err) => Some(&**err),
-            Error::ConfigDeserialization(err) => Some(&**err),
-            Error::NotifyFailed(_, err) => Some(&**err),
-            Error::TargetDoesNotExist(_) => None,
-            Error::TargetTestFailed(errs) => Some(&*errs[0]),
-            Error::FilterFailed(_) => None,
-            Error::RenderError(err) => Some(&**err),
-            Error::Generic(_) => None,
-        }
-    }
-}
+mod error;
+pub use error::Error;
 
 #[api()]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
@@ -123,14 +59,14 @@ impl Display for Severity {
 
 impl FromStr for Severity {
     type Err = Error;
-    fn from_str(s: &str) -> Result<Self, Error> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "info" => Ok(Self::Info),
             "notice" => Ok(Self::Notice),
             "warning" => Ok(Self::Warning),
             "error" => Ok(Self::Error),
             "unknown" => Ok(Self::Unknown),
-            _ => Err(Error::Generic(format!("invalid severity {s}"))),
+            _ => Err(Error::invalid_config(format!("invalid severity {s}"))),
         }
     }
 }
@@ -233,7 +169,7 @@ impl Notification {
     pub fn new_forwarded_mail(raw_mail: &[u8], uid: Option<u32>) -> Result<Self, Error> {
         let message = mail_parser::MessageParser::default()
             .parse(raw_mail)
-            .ok_or_else(|| Error::Generic("could not parse forwarded email".to_string()))?;
+            .ok_or_else(|| Error::invalid_forwarded_message("could not parse forwarded email"))?;
 
         let title = message.subject().unwrap_or_default().into();
         let body = message.body_text(0).unwrap_or_default().into();
@@ -589,7 +525,7 @@ impl Bus {
         if let Some(endpoint) = self.endpoints.get(target) {
             endpoint.send(&notification)?;
         } else {
-            return Err(Error::TargetDoesNotExist(target.to_string()));
+            return Err(Error::target_does_not_exist(target));
         }
 
         Ok(())

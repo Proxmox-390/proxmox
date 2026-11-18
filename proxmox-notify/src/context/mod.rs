@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::sync::Mutex;
 
-use crate::Error;
+use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
 #[cfg(any(feature = "pve-context", feature = "pbs-context"))]
@@ -12,6 +12,11 @@ pub mod pbs;
 pub mod pve;
 #[cfg(test)]
 mod test;
+
+// NOTE: Don't use proxmox_notify::Error in this trait, rather return a [`BoxedError`]. You
+// may wrap the boxed error into an appropriate variant of proxmox_notify::Error at
+// the callsite, but product-code (which includes the trait implementations of Context) should
+// not have to instantiate proxmox_notify::Error themselves.
 
 /// Product-specific context
 pub trait Context: Send + Sync + Debug {
@@ -31,7 +36,7 @@ pub trait Context: Send + Sync + Debug {
         filename: &str,
         namespace: Option<&str>,
         source: TemplateSource,
-    ) -> Result<Option<String>, Error>;
+    ) -> Result<Option<String>, BoxedError>;
 }
 
 #[cfg(not(test))]

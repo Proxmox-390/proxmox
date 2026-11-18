@@ -141,13 +141,15 @@ impl Endpoint for SendmailEndpoint {
 
                 recipients_str.iter().for_each(|r| mail.add_recipient(r));
 
-                mail.send()
-                    .map_err(|err| Error::NotifyFailed(self.config.name.clone(), err.into()))
+                mail.send().map_err(|err| {
+                    Error::other_with_source("could not send mail via sendmail", err)
+                })
             }
             #[cfg(feature = "mail-forwarder")]
             Content::ForwardedMail { raw, uid, .. } => {
-                Mail::forward(&recipients_str, &mailfrom, raw, *uid)
-                    .map_err(|err| Error::NotifyFailed(self.config.name.clone(), err.into()))
+                Mail::forward(&recipients_str, &mailfrom, raw, *uid).map_err(|err| {
+                    Error::other_with_source("could not forward mail via sendmail", err)
+                })
             }
         }
     }

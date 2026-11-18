@@ -272,7 +272,9 @@ fn render_template_impl(
     filename: &str,
     source: TemplateSource,
 ) -> Result<Option<String>, Error> {
-    let template_string = context::context().lookup_template(filename, None, source)?;
+    let template_string = context::context()
+        .lookup_template(filename, None, source)
+        .map_err(Error::template_could_not_be_read)?;
 
     if let Some(template_string) = template_string {
         let mut handlebars = Handlebars::new();
@@ -290,7 +292,7 @@ fn render_template_impl(
 
         let rendered_template = handlebars
             .render_template(&template_string, data)
-            .map_err(|err| Error::RenderError(err.into()))?;
+            .map_err(|err| Error::template_rendering(err.to_string()))?;
 
         let rendered_template = renderer.postprocess(rendered_template);
 
@@ -357,9 +359,8 @@ pub fn render_template(
         }
     }
 
-    Err(Error::Generic(
-        "failed to render notification template, all template candidates are erroneous or missing"
-            .into(),
+    Err(Error::template_rendering(
+        "all template candidates are erroneous or missing",
     ))
 }
 

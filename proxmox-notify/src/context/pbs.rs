@@ -6,8 +6,8 @@ use tracing::error;
 use proxmox_schema::{ObjectSchema, Schema, StringSchema};
 use proxmox_section_config::{SectionConfig, SectionConfigPlugin};
 
-use crate::Error;
 use crate::context::{Context, common};
+use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
 const PBS_USER_CFG_FILENAME: &str = "/etc/proxmox-backup/user.cfg";
@@ -111,7 +111,7 @@ impl Context for PBSContext {
         filename: &str,
         namespace: Option<&str>,
         source: TemplateSource,
-    ) -> Result<Option<String>, Error> {
+    ) -> Result<Option<String>, BoxedError> {
         let path = match source {
             TemplateSource::Vendor => "/usr/share/proxmox-backup/templates",
             TemplateSource::Override => "/etc/proxmox-backup/notification-templates",
@@ -121,8 +121,8 @@ impl Context for PBSContext {
             .join(namespace.unwrap_or("default"))
             .join(filename);
 
-        let template_string = proxmox_sys::fs::file_read_optional_string(path)
-            .map_err(|err| Error::Generic(format!("could not load template: {err}")))?;
+        let template_string = proxmox_sys::fs::file_read_optional_string(path)?;
+
         Ok(template_string)
     }
 }

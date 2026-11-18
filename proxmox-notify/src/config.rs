@@ -124,7 +124,7 @@ pub fn config(raw_config: &str) -> Result<(SectionConfigData, [u8; 32]), Error> 
     let digest = openssl::sha::sha256(raw_config.as_bytes());
     let data = config_parser()
         .parse("notifications.cfg", raw_config)
-        .map_err(|err| Error::ConfigDeserialization(err.into()))?;
+        .map_err(Error::config_deserialization)?;
 
     Ok((data, digest))
 }
@@ -133,18 +133,19 @@ pub fn private_config(raw_config: &str) -> Result<(SectionConfigData, [u8; 32]),
     let digest = openssl::sha::sha256(raw_config.as_bytes());
     let data = private_config_parser()
         .parse("priv/notifications.cfg", raw_config)
-        .map_err(|err| Error::ConfigDeserialization(err.into()))?;
+        .map_err(Error::config_deserialization)?;
+
     Ok((data, digest))
 }
 
 pub fn write(config: &SectionConfigData) -> Result<String, Error> {
     config_parser()
         .write("notifications.cfg", config)
-        .map_err(|err| Error::ConfigSerialization(err.into()))
+        .map_err(Error::config_serialization)
 }
 
 pub fn write_private(config: &SectionConfigData) -> Result<String, Error> {
     private_config_parser()
         .write("priv/notifications.cfg", config)
-        .map_err(|err| Error::ConfigSerialization(err.into()))
+        .map_err(Error::config_serialization)
 }

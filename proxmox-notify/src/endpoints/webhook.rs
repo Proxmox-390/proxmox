@@ -215,13 +215,13 @@ impl KeyAndBase64Val {
     pub fn decode_value(&self) -> Result<String, Error> {
         let value = self.value.as_deref().unwrap_or_default();
         let bytes = proxmox_base64::decode(value).map_err(|_| {
-            Error::Generic(format!(
+            Error::invalid_config(format!(
                 "could not decode base64 value with key '{}'",
                 self.name
             ))
         })?;
         let value = String::from_utf8(bytes).map_err(|_| {
-            Error::Generic(format!(
+            Error::invalid_config(format!(
                 "could not decode UTF8 string from base64, key '{}'",
                 self.name
             ))
@@ -245,7 +245,8 @@ impl Endpoint for WebhookEndpoint {
 
         self.create_client()?
             .request(request)
-            .map_err(|err| self.mask_secret_in_error(err))?;
+            .map_err(|err| self.mask_secret_in_error(err))
+            .map_err(Error::http_request_failed)?;
 
         Ok(())
     }
@@ -267,7 +268,7 @@ impl WebhookEndpoint {
             .http_proxy_config()
             .map(|url| ProxyConfig::parse_proxy_url(&url))
             .transpose()
-            .map_err(|err| Error::NotifyFailed(self.name().to_string(), err.into()))?;
+            .map_err(|err| Error::invalid_config_with_source("invalid proxy configuration", err))?;
 
         let options = HttpOptions {
             proxy_config,
@@ -322,12 +323,14 @@ impl WebhookEndpoint {
         let body = handlebars
             .render_template(&body_template, &data)
             .map_err(|err| self.mask_secret_in_error(err))
-            .map_err(|err| Error::Generic(format!("failed to render webhook body: {err}")))?;
+            .map_err(|err| {
+                Error::invalid_config(format!("failed to render webhook body: {err}"))
+            })?;
 
         let url = handlebars
             .render_template(&self.config.url, &data)
             .map_err(|err| self.mask_secret_in_error(err))
-            .map_err(|err| Error::Generic(format!("failed to render webhook url: {err}")))?;
+            .map_err(|err| Error::invalid_config(format!("failed to render webhook url: {err}")))?;
 
         let method: &str = self.config.method.into();
         let mut builder = http::Request::builder().uri(url).method(method);
@@ -339,7 +342,7 @@ impl WebhookEndpoint {
                 .render_template(&value, &data)
                 .map_err(|err| self.mask_secret_in_error(err))
                 .map_err(|err| {
-                    Error::Generic(format!(
+                    Error::invalid_config(format!(
                         "failed to render header value template: {value}: {err}"
                     ))
                 })?;
@@ -367,20 +370,21 @@ impl WebhookEndpoint {
         let request = builder
             .body(body)
             .map_err(|err| self.mask_secret_in_error(err))
-            .map_err(|err| Error::Generic(format!("failed to build http request: {err}")))?;
+            .map_err(|err| Error::invalid_config(format!("failed to build http request: {err}")))?;
 
         Ok(request)
     }
 
     fn base64_decode(&self, s: &str) -> Result<String, Error> {
-        // Also here, TODO: revisit Error variants for the *whole* crate.
-        let s = proxmox_base64::decode(s)
-            .map_err(|err| Error::Generic(format!("could not decode base64 value: {err}")))?;
+        let s = proxmox_base64::decode(s).map_err(|err| {
+            Error::invalid_config_with_source("could not decode base64 value", err)
+        })?;
 
         String::from_utf8(s).map_err(|err| {
-            Error::Generic(format!(
-                "base64 encoded value did not contain valid utf8: {err}"
-            ))
+            Error::invalid_config_with_source(
+                "base64 encoded value did not contain valid utf8",
+                err,
+            )
         })
     }
 
@@ -393,17 +397,17 @@ impl WebhookEndpoint {
     ///
     /// This function will only mask exact matches, but this should suffice
     /// for the majority of cases.
-    fn mask_secret_in_error(&self, error: impl std::fmt::Display) -> Error {
+    fn mask_secret_in_error(&self, error: impl std::fmt::Display) -> String {
         let mut s = error.to_string();
 
         for secret_value in &self.private_config.secret {
             match secret_value.decode_value() {
                 Ok(value) => s = s.replace(&value, "<masked>"),
-                Err(e) => return e,
+                Err(e) => return format!("could not decode secret while masking error: {e}"),
             }
         }
 
-        Error::Generic(s)
+        s
     }
 }
 
@@ -508,7 +512,7 @@ mod tests {
     use crate::Severity;
 
     #[test]
-    fn test_build_request() -> Result<(), Error> {
+    fn test_build_request() {
         let data = HashMap::from_iter([
             ("hello".into(), "hello world".into()),
             ("test".into(), "escaped\nstring".into()),
@@ -560,14 +564,12 @@ hello%20world
 
         let notification = Notification::from_template(Severity::Info, "foo", json!({}), data);
 
-        let request = endpoint.build_request(&notification)?;
+        let request = endpoint.build_request(&notification).unwrap();
 
         assert_eq!(request.uri(), "http://localhost/hello%20world");
         assert_eq!(request.body(), expected_body);
         assert_eq!(request.method(), "POST");
 
         assert_eq!(request.headers().get("X-Severity").unwrap(), "info");
-
-        Ok(())
     }
 }

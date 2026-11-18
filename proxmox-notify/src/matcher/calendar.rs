@@ -29,7 +29,7 @@ impl FromStr for DailyDurationWrapper {
 
     fn from_str(s: &str) -> Result<Self, Error> {
         let daily_duration = proxmox_time::parse_daily_duration(s)
-            .map_err(|e| Error::Generic(format!("could not parse schedule: {e}")))?;
+            .map_err(|err| Error::invalid_config_with_source("could not parse schedule", err))?;
 
         Ok(Self {
             daily_duration,
@@ -65,7 +65,7 @@ impl MatchDirective for CalendarMatcher {
         self.schedule
             .daily_duration
             .time_match(notification.metadata.timestamp, false)
-            .map_err(|err| Error::Generic(format!("could not match timestamp: {err}")))
+            .map_err(|err| Error::invalid_config_with_source("could not match timestamp", err))
     }
 
     fn validate(&self) -> Result<(), Error> {

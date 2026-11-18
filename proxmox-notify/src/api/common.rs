@@ -1,7 +1,7 @@
 use proxmox_http_error::HttpError;
 
 use super::http_err;
-use crate::{Bus, Config, Notification};
+use crate::{Bus, Config, Error, Notification};
 
 /// Send a notification to a given target.
 ///
@@ -33,7 +33,7 @@ pub fn test_target(config: &Config, endpoint: &str) -> Result<(), HttpError> {
     })?;
 
     bus.test_target(endpoint).map_err(|err| match err {
-        crate::Error::TargetDoesNotExist(endpoint) => {
+        Error::TargetDoesNotExist(endpoint) => {
             http_err!(NOT_FOUND, "endpoint '{endpoint}' does not exist")
         }
         _ => http_err!(INTERNAL_SERVER_ERROR, "Could not test target: {err}"),

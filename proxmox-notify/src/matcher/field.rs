@@ -59,21 +59,21 @@ impl MatchDirective for FieldMatcher {
         match self {
             FieldMatcher::Exact { field, values } => {
                 if values.is_empty() {
-                    return Err(Error::Generic(
-                        "field matcher must contain values to match".to_string(),
+                    return Err(Error::invalid_config(
+                        "field matcher must contain values to match",
                     ));
                 }
                 if !SAFE_ID_REGEX.is_match(field) {
-                    return Err(Error::Generic(
-                        "field name does not match regex pattern".to_string(),
-                    ));
+                    return Err(Error::invalid_config(format!(
+                        "field name '{field}' does not match regex pattern",
+                    )));
                 }
             }
             FieldMatcher::Regex { field, .. } => {
                 if !SAFE_ID_REGEX.is_match(field) {
-                    return Err(Error::Generic(
-                        "field name does not match regex pattern".to_string(),
-                    ));
+                    return Err(Error::invalid_config(format!(
+                        "field name '{field}' does not match regex pattern",
+                    )));
                 }
             }
         }
@@ -156,19 +156,20 @@ pub mod inline {
         type Err = Error;
         fn from_str(s: &str) -> Result<Self, Error> {
             if !MATCH_FIELD_ENTRY_REGEX.is_match(s) {
-                return Err(Error::FilterFailed(format!(
+                return Err(Error::invalid_config(format!(
                     "invalid match-field statement: {s}"
                 )));
             }
 
             if let Some(remaining) = s.strip_prefix("regex:") {
                 match remaining.split_once('=') {
-                    None => Err(Error::FilterFailed(format!(
+                    None => Err(Error::invalid_config(format!(
                         "invalid match-field statement: {s}"
                     ))),
                     Some((field, expected_value_regex)) => {
-                        let regex = Regex::new(expected_value_regex)
-                            .map_err(|err| Error::FilterFailed(format!("invalid regex: {err}")))?;
+                        let regex = Regex::new(expected_value_regex).map_err(|err| {
+                            Error::invalid_config_with_source("invalid regex", err)
+                        })?;
 
                         Ok(Self(FieldMatcher::Regex {
                             field: field.into(),
@@ -178,7 +179,7 @@ pub mod inline {
                 }
             } else if let Some(remaining) = s.strip_prefix("exact:") {
                 match remaining.split_once('=') {
-                    None => Err(Error::FilterFailed(format!(
+                    None => Err(Error::invalid_config(format!(
                         "invalid match-field statement: {s}"
                     ))),
                     Some((field, expected_values)) => {
@@ -194,7 +195,7 @@ pub mod inline {
                     }
                 }
             } else {
-                Err(Error::FilterFailed(format!(
+                Err(Error::invalid_config(format!(
                     "invalid match-field statement: {s}"
                 )))
             }

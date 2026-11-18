@@ -25,6 +25,7 @@ regex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_regex.workspace = true
+thiserror.workspace = true
 
 proxmox-api-macro.workspace = true
 proxmox-base64 = { workspace = true, optional = true }

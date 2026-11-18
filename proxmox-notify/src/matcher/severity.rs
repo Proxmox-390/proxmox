@@ -25,8 +25,8 @@ impl MatchDirective for SeverityMatcher {
 
     fn validate(&self) -> Result<(), Error> {
         if self.severities.is_empty() {
-            return Err(Error::Generic(
-                "severity matcher must contain severities to match".to_string(),
+            return Err(Error::invalid_config(
+                "severity matcher must contain severities to match",
             ));
         }
 
@@ -75,7 +75,9 @@ pub mod inline {
 
             for element in s.split(',') {
                 let element = element.trim();
-                let severity: Severity = element.parse()?;
+                let severity: Severity = element
+                    .parse()
+                    .map_err(|err| Error::invalid_config_with_source("invalid severity", err))?;
 
                 severities.push(severity)
             }

@@ -160,7 +160,7 @@ pub struct SmtpEndpoint {
 impl Endpoint for SmtpEndpoint {
     fn send(&self, notification: &Notification) -> Result<(), Error> {
         let tls_parameters = TlsParameters::new(self.config.server.clone())
-            .map_err(|err| Error::NotifyFailed(self.name().into(), Box::new(err)))?;
+            .map_err(|err| Error::invalid_config_with_source("invalid SMTP server name", err))?;
 
         let (port, tls) = match self.config.mode.unwrap_or_default() {
             SmtpMode::Insecure => {
@@ -186,11 +186,8 @@ impl Endpoint for SmtpEndpoint {
             if let Some(password) = self.private_config.password.as_deref() {
                 transport_builder = transport_builder.credentials((username, password).into());
             } else {
-                return Err(Error::NotifyFailed(
-                    self.name().into(),
-                    Box::new(Error::Generic(
-                        "username is set but no password was provided".to_owned(),
-                    )),
+                return Err(Error::invalid_config(
+                    "username is set but no password was provided",
                 ));
             }
         }
@@ -204,8 +201,12 @@ impl Endpoint for SmtpEndpoint {
         let mail_from = self.config.from_address.clone();
 
         let parse_address = |addr: &str| -> Result<Mailbox, Error> {
-            addr.parse()
-                .map_err(|err| Error::NotifyFailed(self.name().into(), Box::new(err)))
+            addr.parse().map_err(|err| {
+                Error::invalid_config_with_source(
+                    format!("could not parse email address '{addr}'"),
+                    err,
+                )
+            })
         };
 
         let author = self
@@ -251,12 +252,12 @@ impl Endpoint for SmtpEndpoint {
                                     .body(html_part),
                             ),
                     )
-                    .map_err(|err| Error::NotifyFailed(self.name().into(), Box::new(err)))?
+                    .map_err(|err| {
+                        Error::invalid_config_with_source("could not build email message", err)
+                    })?
             }
             #[cfg(feature = "mail-forwarder")]
-            Content::ForwardedMail { raw, .. } => {
-                build_forwarded_message(email_builder, self.name(), raw)?
-            }
+            Content::ForwardedMail { raw, .. } => build_forwarded_message(email_builder, raw)?,
         };
 
         // `Auto-Submitted` is defined in RFC 5436 and describes how
@@ -268,9 +269,7 @@ impl Endpoint for SmtpEndpoint {
             "auto-generated;".into(),
         ));
 
-        transport
-            .send(&email)
-            .map_err(|err| Error::NotifyFailed(self.name().into(), err.into()))?;
+        transport.send(&email).map_err(Error::smtp_error)?;
 
         Ok(())
     }
@@ -289,7 +288,6 @@ impl Endpoint for SmtpEndpoint {
 #[cfg(feature = "mail-forwarder")]
 fn build_forwarded_message(
     email_builder: lettre::message::MessageBuilder,
-    endpoint_name: &str,
     raw: &[u8],
 ) -> Result<Message, Error> {
     use lettre::message::Body;
@@ -298,11 +296,11 @@ fn build_forwarded_message(
 
     let parsed_message = mail_parser::MessageParser::default()
         .parse(raw)
-        .ok_or_else(|| Error::Generic("could not parse forwarded email".to_string()))?;
+        .ok_or_else(|| Error::invalid_forwarded_message("could not parse forwarded email"))?;
 
     let root_part = parsed_message
         .part(0)
-        .ok_or_else(|| Error::Generic("root message part not present".to_string()))?;
+        .ok_or_else(|| Error::invalid_forwarded_message("root message part not present"))?;
 
     let raw_body = &parsed_message.raw_message()
         [root_part.offset_body as usize..root_part.offset_end as usize];
@@ -320,11 +318,13 @@ fn build_forwarded_message(
         proxmox_sendmail::normalize_line_endings(raw_body),
         ContentTransferEncoding::Binary,
     )
-    .map_err(|_| Error::Generic("could not create body".into()))?;
+    .map_err(|_| Error::invalid_forwarded_message("could not create body from raw bytes"))?;
     let mut message = email_builder
         .subject(parsed_message.subject().unwrap_or_default())
         .body(body)
-        .map_err(|err| Error::NotifyFailed(endpoint_name.into(), Box::new(err)))?;
+        .map_err(|err| {
+            Error::invalid_forwarded_message_with_source("could not build email message", err)
+        })?;
     message
         .headers_mut()
         .remove_raw("Content-Transfer-Encoding");
@@ -450,7 +450,7 @@ mod tests {
         email_builder = email_builder.to("Recipient <recipient@example.com>".parse().unwrap());
 
         let raw_mail = std::fs::read(input).unwrap();
-        let mut message = build_forwarded_message(email_builder, "test", &raw_mail).unwrap();
+        let mut message = build_forwarded_message(email_builder, &raw_mail).unwrap();
 
         // The Date header contains the current time, let's just remove it
         // for this test.

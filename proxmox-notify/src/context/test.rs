@@ -1,5 +1,5 @@
-use crate::Error;
 use crate::context::Context;
+use crate::error::BoxedError;
 use crate::renderer::TemplateSource;
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl Context for TestContext {
         _filename: &str,
         _namespace: Option<&str>,
         _source: TemplateSource,
-    ) -> Result<Option<String>, Error> {
+    ) -> Result<Option<String>, BoxedError> {
         Ok(Some(String::new()))
     }
 }

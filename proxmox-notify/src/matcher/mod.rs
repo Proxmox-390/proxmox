@@ -155,7 +155,10 @@ impl MatcherConfig {
         let expression: Expression<NotificationMatcher> = {
             if let Some(expression_str) = &self.expression {
                 serde_json::from_str(expression_str).map_err(|err| {
-                    Error::FilterFailed(format!("could not deserialize filter expression: {err:#}"))
+                    Error::invalid_config_with_source(
+                        "could not deserialize matcher expression",
+                        err,
+                    )
                 })?
             } else {
                 #[cfg(feature = "legacy-matchers")]
@@ -234,7 +237,7 @@ impl MatcherConfig {
 
             if !conflicting_properties.is_empty() {
                 let joined = conflicting_properties.join(", ");
-                return Err(Error::Generic(format!(
+                return Err(Error::invalid_config(format!(
                     "'expression' property is mutually exclusive with: {joined}"
                 )));
             }
@@ -252,13 +255,14 @@ impl MatcherConfig {
                     // Storing the *serialized* expression makes sure that
                     // we have a minified, single-line JSON string
                     self.expression = Some(serde_json::to_string(&expr).map_err(|err| {
-                        Error::Generic(format!("could not serialize expression: {err:#}"))
+                        Error::other_with_source("could not serialize expression", err)
                     })?);
                 }
                 Err(err) => {
-                    return Err(Error::Generic(format!(
-                        "'expression' is not valid: {err:#}"
-                    )));
+                    return Err(Error::invalid_config_with_source(
+                        "'expression' is not valid",
+                        err,
+                    ));
                 }
             }
         }
@@ -277,21 +281,21 @@ impl MatcherConfig {
         match expr {
             Expression::AllOf(expressions) => {
                 if expressions.is_empty() {
-                    return Err(Error::Generic(
+                    return Err(Error::invalid_config(
                         "'expression' may not contain an empty 'all-of' rule".to_string(),
                     ));
                 }
             }
             Expression::AnyOf(expressions) => {
                 if expressions.is_empty() {
-                    return Err(Error::Generic(
+                    return Err(Error::invalid_config(
                         "'expression' may not contain an empty 'any-of' rule".to_string(),
                     ));
                 }
             }
             Expression::OneOf(expressions) => {
                 if expressions.is_empty() {
-                    return Err(Error::Generic(
+                    return Err(Error::invalid_config(
                         "'expression' may not contain an empty 'one-of' rule".to_string(),
                     ));
                 }

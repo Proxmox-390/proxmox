@@ -129,7 +129,8 @@ impl Endpoint for GotifyEndpoint {
         });
 
         let body = serde_json::to_vec(&body)
-            .map_err(|err| Error::NotifyFailed(self.name().to_string(), err.into()))?;
+            .map_err(|err| Error::other_with_source("could not serialize JSON body", err))?;
+
         let extra_headers = HashMap::from([
             (
                 http::header::AUTHORIZATION.to_string(),
@@ -146,7 +147,7 @@ impl Endpoint for GotifyEndpoint {
             .http_proxy_config()
             .map(|url| ProxyConfig::parse_proxy_url(&url))
             .transpose()
-            .map_err(|err| Error::NotifyFailed(self.name().to_string(), err.into()))?;
+            .map_err(|err| Error::invalid_config_with_source("invalid proxy configuration", err))?;
 
         let options = HttpOptions {
             proxy_config,
@@ -163,7 +164,7 @@ impl Endpoint for GotifyEndpoint {
                 Some("application/json"),
                 Some(&extra_headers),
             )
-            .map_err(|err| Error::NotifyFailed(self.name().to_string(), err.into()))?;
+            .map_err(Error::http_request_failed)?;
 
         Ok(())
     }
