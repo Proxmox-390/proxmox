@@ -1,9 +1,8 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::error::BoxedError;
-use crate::renderer::TemplateSource;
 
 #[cfg(any(feature = "pve-context", feature = "pbs-context"))]
 pub mod common;
@@ -60,4 +59,20 @@ pub trait ContextImpl: Send + Sync + Debug {
         namespace: Option<&str>,
         source: TemplateSource,
     ) -> Result<Option<String>, BoxedError>;
+}
+
+/// Choose between the provided `vendor` template or its by the user optionally created `override`
+#[derive(Copy, Clone)]
+pub enum TemplateSource {
+    Vendor,
+    Override,
+}
+
+impl Display for TemplateSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TemplateSource::Vendor => f.write_str("vendor"),
+            TemplateSource::Override => f.write_str("override"),
+        }
+    }
 }

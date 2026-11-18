@@ -1,6 +1,6 @@
 //! Module for rendering notification templates.
 
-use std::{fmt::Display, time::Duration};
+use std::time::Duration;
 
 use handlebars::Context as HandlebarsContext;
 use handlebars::{
@@ -13,7 +13,9 @@ use tracing::error;
 use proxmox_human_byte::HumanByte;
 use proxmox_time::TimeSpan;
 
-use crate::{Context, Error};
+use crate::Context;
+use crate::Error;
+use crate::context::TemplateSource;
 
 mod html;
 mod plaintext;
@@ -175,22 +177,6 @@ impl ValueRenderFunction {
                 },
             ),
         );
-    }
-}
-
-/// Choose between the provided `vendor` template or its by the user optionally created `override`
-#[derive(Copy, Clone)]
-pub enum TemplateSource {
-    Vendor,
-    Override,
-}
-
-impl Display for TemplateSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TemplateSource::Vendor => f.write_str("vendor"),
-            TemplateSource::Override => f.write_str("override"),
-        }
     }
 }
 

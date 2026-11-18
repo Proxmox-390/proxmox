@@ -1,7 +1,8 @@
 use crate::Context;
 use crate::context::ContextImpl;
 use crate::error::BoxedError;
-use crate::renderer::TemplateSource;
+
+use super::TemplateSource;
 
 #[derive(Debug)]
 pub(crate) struct TestContext;
