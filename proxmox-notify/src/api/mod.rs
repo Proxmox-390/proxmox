@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
-use proxmox_schema::api;
 
 use crate::Config;
-use crate::api_types::Origin;
+use crate::api_types::{EndpointType, Origin, Target};
 
 pub mod common;
 pub mod gotify;
@@ -39,41 +38,6 @@ macro_rules! http_bail {
 
 pub use http_bail;
 pub use http_err;
-
-#[api]
-#[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
-#[serde(rename_all = "kebab-case")]
-/// Type of the endpoint.
-pub enum EndpointType {
-    /// Sendmail endpoint
-    Sendmail,
-    /// SMTP endpoint
-    Smtp,
-    /// Gotify endpoint
-    Gotify,
-    /// Webhook endpoint
-    Webhook,
-}
-
-#[api]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
-#[serde(rename_all = "kebab-case")]
-/// Target information
-pub struct Target {
-    /// Name of the endpoint
-    name: String,
-    /// Origin of the endpoint
-    origin: Origin,
-    /// Type of the endpoint
-    #[serde(rename = "type")]
-    endpoint_type: EndpointType,
-    /// Target is disabled
-    #[serde(skip_serializing_if = "Option::is_none")]
-    disable: Option<bool>,
-    /// Comment
-    #[serde(skip_serializing_if = "Option::is_none")]
-    comment: Option<String>,
-}
 
 /// Get a list of all notification targets.
 pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {

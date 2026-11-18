@@ -36,3 +36,38 @@ pub enum Origin {
     /// Config entry provided by the system, but modified by the user.
     ModifiedBuiltin,
 }
+
+#[api]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
+/// Type of the endpoint.
+pub enum EndpointType {
+    /// Sendmail endpoint
+    Sendmail,
+    /// SMTP endpoint
+    Smtp,
+    /// Gotify endpoint
+    Gotify,
+    /// Webhook endpoint
+    Webhook,
+}
+
+#[api]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
+/// Target information
+pub struct Target {
+    /// Name of the endpoint
+    pub name: String,
+    /// Origin of the endpoint
+    pub origin: Origin,
+    /// Type of the endpoint
+    #[serde(rename = "type")]
+    pub endpoint_type: EndpointType,
+    /// Target is disabled
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disable: Option<bool>,
+    /// Comment
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
