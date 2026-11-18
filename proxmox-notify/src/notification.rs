@@ -154,3 +154,113 @@ impl Notification {
         &mut self.metadata.additional_fields
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    const TEST_MAIL: &[u8] = include_bytes!("../testdata/test1.msg");
+
+    const ALL_SEVERITIES: [Severity; 5] = [
+        Severity::Info,
+        Severity::Notice,
+        Severity::Warning,
+        Severity::Error,
+        Severity::Unknown,
+    ];
+
+    #[test]
+    fn severity_string_roundtrip() {
+        for severity in ALL_SEVERITIES {
+            let parsed: Severity = severity.to_string().parse().unwrap();
+            assert_eq!(parsed, severity);
+        }
+    }
+
+    #[test]
+    fn severity_display_matches_serde() {
+        for severity in ALL_SEVERITIES {
+            let serialized = serde_json::to_value(severity).unwrap();
+            assert_eq!(serialized, Value::String(severity.to_string()));
+        }
+    }
+
+    #[test]
+    fn severity_from_invalid_str() {
+        assert!("".parse::<Severity>().is_err());
+        assert!("Info".parse::<Severity>().is_err());
+        assert!("critical".parse::<Severity>().is_err());
+    }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Info < Severity::Notice);
+        assert!(Severity::Notice < Severity::Warning);
+        assert!(Severity::Warning < Severity::Error);
+    }
+
+    #[test]
+    fn from_template() {
+        let fields = HashMap::from([("hostname".to_string(), "pve".to_string())]);
+        let data = json!({"key": "value"});
+
+        let notification =
+            Notification::from_template(Severity::Warning, "test", data.clone(), fields.clone());
+
+        assert_eq!(notification.severity(), Severity::Warning);
+        assert_eq!(notification.fields(), &fields);
+        assert_eq!(
+            notification.content,
+            Content::Template {
+                template_name: "test".into(),
+                data,
+            }
+        );
+    }
+
+    #[test]
+    fn new_forwarded_mail() {
+        let raw = TEST_MAIL.to_vec();
+
+        let notification =
+            Notification::new_forwarded_mail(Severity::Unknown, raw.clone(), HashMap::new())
+                .unwrap();
+
+        assert_eq!(notification.severity(), Severity::Unknown);
+        assert!(notification.fields().is_empty());
+        assert_eq!(notification.content, Content::ForwardedMail { raw });
+    }
+
+    #[test]
+    fn fields_mut() {
+        let mut notification =
+            Notification::from_template(Severity::Info, "test", Value::Null, HashMap::new());
+
+        notification
+            .fields_mut()
+            .insert("type".into(), "vzdump".into());
+
+        assert_eq!(
+            notification.fields().get("type").map(String::as_str),
+            Some("vzdump")
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip() {
+        let fields = HashMap::from([("hostname".to_string(), "pve".to_string())]);
+        let notifications = [
+            Notification::from_template(Severity::Error, "test", json!({"a": [1, 2]}), fields),
+            Notification::new_forwarded_mail(Severity::Info, TEST_MAIL.to_vec(), HashMap::new())
+                .unwrap(),
+        ];
+
+        for notification in notifications {
+            let serialized = serde_json::to_string(&notification).unwrap();
+            let deserialized: Notification = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, notification);
+        }
+    }
+}
