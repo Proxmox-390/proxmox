@@ -98,7 +98,7 @@ fn private_config_init() -> SectionConfig {
     config
 }
 
-pub fn config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+fn parse_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
     let digest = ConfigDigest::from_slice(raw_config.as_bytes());
     let data = config_parser()
         .parse("notifications.cfg", raw_config)
@@ -107,7 +107,7 @@ pub fn config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Err
     Ok((data, digest))
 }
 
-pub fn private_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+fn parse_private_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
     let digest = ConfigDigest::from_slice(raw_config.as_bytes());
     let data = private_config_parser()
         .parse("priv/notifications.cfg", raw_config)
@@ -116,13 +116,13 @@ pub fn private_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDige
     Ok((data, digest))
 }
 
-pub fn write(config: &SectionConfigData) -> Result<String, Error> {
+fn write(config: &SectionConfigData) -> Result<String, Error> {
     config_parser()
         .write("notifications.cfg", config)
         .map_err(Error::config_serialization)
 }
 
-pub fn write_private(config: &SectionConfigData) -> Result<String, Error> {
+fn write_private(config: &SectionConfigData) -> Result<String, Error> {
     private_config_parser()
         .write("priv/notifications.cfg", config)
         .map_err(Error::config_serialization)
@@ -143,8 +143,8 @@ impl Config {
         raw_config: &str,
         raw_private_config: &str,
     ) -> Result<Self, Error> {
-        let (mut config, digest) = config(raw_config)?;
-        let (private_config, _) = private_config(raw_private_config)?;
+        let (mut config, digest) = parse_config(raw_config)?;
+        let (private_config, _) = parse_private_config(raw_private_config)?;
 
         let default_config = context.default_config();
 
