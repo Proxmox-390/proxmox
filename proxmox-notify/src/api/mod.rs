@@ -6,7 +6,8 @@ use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 use proxmox_schema::api;
 
-use crate::{Config, Origin};
+use crate::Config;
+use crate::api_types::Origin;
 
 pub mod common;
 pub mod gotify;

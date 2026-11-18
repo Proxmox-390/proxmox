@@ -1,9 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![deny(unsafe_code)]
 
-use std::collections::HashMap;
-use std::fmt::Display;
-use std::str::FromStr;
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,19 +74,6 @@ impl FromStr for Severity {
             _ => Err(Error::invalid_config(format!("invalid severity {s}"))),
         }
     }
-}
-
-#[api()]
-#[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
-#[serde(rename_all = "kebab-case")]
-/// The origin of a notification configuration entry.
-pub enum Origin {
-    /// User-created config entry
-    UserCreated,
-    /// Config entry provided by the system
-    Builtin,
-    /// Config entry provided by the system, but modified by the user.
-    ModifiedBuiltin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

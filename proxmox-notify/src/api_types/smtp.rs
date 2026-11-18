@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use proxmox_schema::{Updater, api, api_types::COMMENT_SCHEMA};
 
-use crate::Origin;
+use crate::api_types::Origin;
 use crate::schema::{EMAIL_SCHEMA, ENTITY_NAME_SCHEMA, USER_SCHEMA};
 
 pub const SMTP_TYPENAME: &str = "smtp";
