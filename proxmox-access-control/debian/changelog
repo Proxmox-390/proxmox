@@ -1,3 +1,24 @@
+rust-proxmox-access-control (1.4.0-1) trixie; urgency=medium
+
+  * api tokens: add an optional token policy that products can load from
+    their configuration. It can require expiration dates for API tokens,
+    limit their maximum lifetime and forbid extending the expiration date of
+    existing tokens, which compliance rules like PCI DSS, SOC 2 or ISO 27001
+    often demand. Only token creation and updates changing the expiration
+    date are checked, so existing tokens and unrelated edits are not
+    affected. By default, no policy is enforced.
+
+  * api tokens: token policy: optionally give tokens created without an
+    expiration date the maximum lifetime instead of rejecting them, so tools
+    unaware of the policy still get a conforming token.
+
+  * api tokens: token policy: optionally still allow extending the
+    expiration date if the same update regenerates the secret, as the old
+    secret then stops working, just like on recreating the token. The
+    maximum lifetime still applies.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 01:43:44 +0100
+
 rust-proxmox-access-control (1.3.3-1) trixie; urgency=medium
 
   * api: tokens: require the privileges needed for modifying any ACL to

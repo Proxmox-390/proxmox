@@ -10,7 +10,7 @@ Build-Depends-Arch: cargo:native <!nocheck>,
  librust-const-format-0.2+default-dev <!nocheck>,
  librust-proxmox-auth-api-1+api-types-dev (>= 1.0.5-~~) <!nocheck>,
  librust-proxmox-auth-api-1+default-dev (>= 1.0.5-~~) <!nocheck>,
- librust-proxmox-schema-5+default-dev (>= 5.6.0-~~) <!nocheck>,
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~) <!nocheck>,
  librust-proxmox-time-2+default-dev (>= 2.1.0-~~) <!nocheck>,
  librust-proxmox-uuid-1+default-dev (>= 1.1.1-~~) <!nocheck>,
  librust-regex-1+default-dev (>= 1.5-~~) <!nocheck>,
@@ -32,7 +32,7 @@ Depends:
  librust-const-format-0.2+default-dev,
  librust-proxmox-auth-api-1+api-types-dev (>= 1.0.5-~~),
  librust-proxmox-auth-api-1+default-dev (>= 1.0.5-~~),
- librust-proxmox-schema-5+default-dev (>= 5.6.0-~~),
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~),
  librust-proxmox-time-2+default-dev (>= 2.1.0-~~),
  librust-proxmox-uuid-1+default-dev (>= 1.1.1-~~),
  librust-regex-1+default-dev (>= 1.5-~~),
@@ -46,10 +46,10 @@ Provides:
  librust-proxmox-access-control+default-dev (= ${binary:Version}),
  librust-proxmox-access-control-1-dev (= ${binary:Version}),
  librust-proxmox-access-control-1+default-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3+default-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3.3-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3.3+default-dev (= ${binary:Version})
+ librust-proxmox-access-control-1.4-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4+default-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4.0-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4.0+default-dev (= ${binary:Version})
 Description: Collection of utilities to implement access control management - Rust source code
  Source code for Debianized Rust crate "proxmox-access-control"
 
@@ -59,11 +59,11 @@ Multi-Arch: same
 Depends:
  ${misc:Depends},
  librust-proxmox-access-control-dev (= ${binary:Version}),
- librust-proxmox-section-config-3+default-dev (>= 3.3.0-~~)
+ librust-proxmox-section-config-3+default-dev (>= 3.4.0-~~)
 Provides:
  librust-proxmox-access-control-1+acl-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3+acl-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3.3+acl-dev (= ${binary:Version})
+ librust-proxmox-access-control-1.4+acl-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4.0+acl-dev (= ${binary:Version})
 Description: Collection of utilities to implement access control management - feature "acl"
  This metapackage enables feature "acl" for the Rust proxmox-access-control
  crate, by pulling in any additional dependencies needed by that feature.
@@ -78,8 +78,8 @@ Depends:
  librust-hex-0.4+default-dev
 Provides:
  librust-proxmox-access-control-1+api-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3+api-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3.3+api-dev (= ${binary:Version})
+ librust-proxmox-access-control-1.4+api-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4.0+api-dev (= ${binary:Version})
 Description: Collection of utilities to implement access control management - feature "api"
  This metapackage enables feature "api" for the Rust proxmox-access-control
  crate, by pulling in any additional dependencies needed by that feature.
@@ -103,8 +103,8 @@ Depends:
  librust-serde-json-1+default-dev
 Provides:
  librust-proxmox-access-control-1+impl-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3+impl-dev (= ${binary:Version}),
- librust-proxmox-access-control-1.3.3+impl-dev (= ${binary:Version})
+ librust-proxmox-access-control-1.4+impl-dev (= ${binary:Version}),
+ librust-proxmox-access-control-1.4.0+impl-dev (= ${binary:Version})
 Description: Collection of utilities to implement access control management - feature "impl"
  This metapackage enables feature "impl" for the Rust proxmox-access-control
  crate, by pulling in any additional dependencies needed by that feature.
