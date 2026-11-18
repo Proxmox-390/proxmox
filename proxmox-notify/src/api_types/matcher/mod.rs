@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use proxmox_match_expression::Expression;
+use proxmox_match_expression::{EvaluatedExpressionWithResult, Expression};
 use serde::{Deserialize, Serialize};
 
 use proxmox_api_macro::api;
@@ -150,7 +150,10 @@ trait MatchDirective {
 }
 
 impl MatcherConfig {
-    pub fn matches(&self, notification: &Notification) -> Result<Option<&[String]>, Error> {
+    pub fn matches(
+        &self,
+        notification: &Notification,
+    ) -> Result<EvaluatedExpressionWithResult<NotificationMatcher>, Error> {
         #[cfg(feature = "legacy-matchers")]
         self.warn_about_invalid_configuration();
 
@@ -178,9 +181,7 @@ impl MatcherConfig {
         // This gives the user a trace of which rules matched and which did not.
         let evaluated_expression = expression.evaluate(notification)?;
 
-        Ok(evaluated_expression
-            .is_match()
-            .then_some(self.target.as_slice()))
+        Ok(evaluated_expression)
     }
 
     #[cfg(feature = "legacy-matchers")]
@@ -407,7 +408,7 @@ mod tests {
                 ..Default::default()
             };
 
-            assert!(config.matches(&notification).unwrap().is_some())
+            assert!(config.matches(&notification).unwrap().is_match())
         }
     }
 

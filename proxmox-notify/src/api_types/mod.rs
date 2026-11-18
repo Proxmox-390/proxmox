@@ -27,6 +27,9 @@ pub use matcher::*;
 mod schema;
 pub use schema::*;
 
+mod receipt;
+pub use receipt::*;
+
 #[api]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]

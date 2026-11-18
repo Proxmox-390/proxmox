@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet};
 use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 use tracing::{error, info};
 
-use crate::api_types::{MatcherConfig, SendmailConfig};
+use crate::api_types::{
+    MatcherConfig, MatcherReceipt, MatcherReceiptStatus, Receipt, SendmailConfig, TargetReceipt,
+    TargetReceiptStatus,
+};
 use crate::config::{ConfigEntity, PrivateConfigEntity};
 use crate::endpoints::Endpoint;
 use crate::endpoints::gotify::GotifyEndpoint;
@@ -12,15 +15,19 @@ use crate::endpoints::smtp::SmtpEndpoint;
 use crate::endpoints::webhook::WebhookEndpoint;
 use crate::{Config, Context, EmailRecipient, Error, Notification, Recipient};
 
-/// Send a notification to a given target.
+/// Send a notification to the recipient it specifies.
 ///
 /// The caller is responsible for any needed permission checks.
-/// Returns an `anyhow::Error` in case of an error.
-pub fn send(context: &Context, config: &Config, notification: &Notification) -> Result<(), Error> {
+///
+/// Matcher and delivery errors do not fail the call, they are logged and recorded in the returned
+/// [`Receipt`].
+pub fn send(
+    context: &Context,
+    config: &Config,
+    notification: &Notification,
+) -> Result<Receipt, Error> {
     let bus = Bus::from_config(config)?;
-    bus.send(context, notification);
-
-    Ok(())
+    Ok(bus.send(context, notification))
 }
 
 /// Notification bus - distributes notifications to all registered endpoints
@@ -128,20 +135,43 @@ impl Bus {
     /// Send a notification. Notification matchers will determine which targets will receive
     /// the notification.
     ///
-    /// Any errors will not be returned but only logged.
-    pub fn send(&self, context: &Context, notification: &Notification) {
+    /// Matcher and delivery errors are logged and recorded in the returned receipt.
+    pub fn send(&self, context: &Context, notification: &Notification) -> Receipt {
+        let mut target_receipts = Vec::new();
+        let mut matcher_receipts = Vec::new();
+
         match notification.recipient() {
-            Recipient::Email(params) => self.send_to_email(context, notification, params),
+            Recipient::Email(params) => {
+                target_receipts.push(self.send_to_email(context, notification, params))
+            }
             Recipient::Target(target) => {
-                self.send_to_target(context, notification, target);
+                target_receipts.push(self.send_to_target(context, notification, target));
             }
             Recipient::Matcher => {
-                let targets = self.check_matches(notification);
+                matcher_receipts = self.check_matches(notification);
 
-                for target in targets {
-                    self.send_to_target(context, notification, target);
+                let (matching_matchers, targets) =
+                    Self::matching_matchers_and_targets_from_receipts(&matcher_receipts);
+
+                if !matching_matchers.is_empty() {
+                    info!(
+                        "notification matched the following matchers: {}. The following targets will be notified: {}",
+                        matching_matchers.join(", "),
+                        targets.join(", ")
+                    );
+                } else {
+                    info!("notification was not matched by any matcher");
+                }
+
+                for target in &targets {
+                    target_receipts.push(self.send_to_target(context, notification, target));
                 }
             }
+        }
+
+        Receipt {
+            target_receipts,
+            matcher_receipts,
         }
     }
 
@@ -150,7 +180,7 @@ impl Bus {
         context: &Context,
         notification: &Notification,
         email_recipient: &EmailRecipient,
-    ) {
+    ) -> TargetReceipt {
         let recipient_list = email_recipient.mailto.join(", ");
 
         let endpoint = SendmailEndpoint {
@@ -165,72 +195,150 @@ impl Bus {
         match endpoint.send(context, notification) {
             Ok(_) => {
                 info!("notified via `{recipient_list}`");
+                TargetReceipt {
+                    target: "legacy-sendmail".into(),
+                    status: TargetReceiptStatus::Delivered,
+                    timestamp: proxmox_time::epoch_i64(),
+                }
             }
             Err(e) => {
-                // Only log on errors, do not propagate fail to the caller.
+                // Delivery failures are recorded in the receipt, not returned as an error.
                 error!("could not notify via `{recipient_list}`: {e}");
+                TargetReceipt {
+                    target: "legacy-sendmail".into(),
+                    status: TargetReceiptStatus::Error {
+                        error_message: e.to_string(),
+                    },
+                    timestamp: proxmox_time::epoch_i64(),
+                }
             }
         }
     }
 
-    fn send_to_target(&self, context: &Context, notification: &Notification, target: &str) {
+    fn send_to_target(
+        &self,
+        context: &Context,
+        notification: &Notification,
+        target: &str,
+    ) -> TargetReceipt {
         if let Some(endpoint) = self.endpoints.get(target) {
             let name = endpoint.name();
 
             if endpoint.disabled() {
                 // Skip this target if it is disabled
                 info!("skipping disabled target '{name}'");
-                return;
+
+                return TargetReceipt {
+                    target: name.to_string(),
+                    status: TargetReceiptStatus::Disabled,
+                    timestamp: proxmox_time::epoch_i64(),
+                };
             }
 
             match endpoint.send(context, notification) {
                 Ok(_) => {
                     info!("notified via target `{name}`");
+                    TargetReceipt {
+                        target: name.to_string(),
+                        status: TargetReceiptStatus::Delivered,
+                        timestamp: proxmox_time::epoch_i64(),
+                    }
                 }
                 Err(e) => {
-                    // Only log on errors, do not propagate fail to the caller.
+                    // Delivery failures are recorded in the receipt, not returned as an error.
                     error!("could not notify via target `{name}`: {e}");
+                    TargetReceipt {
+                        target: name.to_string(),
+                        status: TargetReceiptStatus::Error {
+                            error_message: e.to_string(),
+                        },
+                        timestamp: proxmox_time::epoch_i64(),
+                    }
                 }
             }
         } else {
             error!("could not notify via target '{target}', it does not exist");
+            TargetReceipt {
+                target: target.to_string(),
+                status: TargetReceiptStatus::Error {
+                    error_message: Error::target_does_not_exist(target).to_string(),
+                },
+                timestamp: proxmox_time::epoch_i64(),
+            }
         }
     }
 
-    fn check_matches(&self, notification: &Notification) -> HashSet<&str> {
-        let mut targets = HashSet::new();
-        let mut matching_matchers = Vec::new();
+    fn check_matches(&self, notification: &Notification) -> Vec<MatcherReceipt> {
+        let mut receipts = Vec::new();
 
         for matcher in &self.matchers {
+            let name = matcher.name.clone();
+
             if matcher.disable.unwrap_or_default() {
                 // Skip this matcher if it is disabled
-                info!("skipping disabled matcher '{name}'", name = matcher.name);
+                info!("skipping disabled matcher '{name}'");
+
+                receipts.push(MatcherReceipt {
+                    matcher: name,
+                    status: MatcherReceiptStatus::Disabled,
+                });
+
                 continue;
             }
 
             match matcher.matches(notification) {
-                Ok(Some(t)) => {
-                    matching_matchers.push(matcher.name.as_str());
-                    targets.extend(t.iter().map(|s| s.as_str()));
+                Ok(evaluated_expression) => {
+                    if evaluated_expression.is_match() {
+                        receipts.push(MatcherReceipt {
+                            matcher: name,
+                            status: MatcherReceiptStatus::Matched {
+                                evaluated_expression,
+                                targets: matcher.target.clone(),
+                            },
+                        });
+                    } else {
+                        receipts.push(MatcherReceipt {
+                            matcher: name,
+                            status: MatcherReceiptStatus::NoMatch {
+                                evaluated_expression,
+                            },
+                        });
+                    }
                 }
-                Ok(None) => {}
-                Err(err) => error!("matcher '{matcher}' failed: {err}", matcher = matcher.name),
+                Err(err) => {
+                    receipts.push(MatcherReceipt {
+                        matcher: name,
+                        status: MatcherReceiptStatus::Error {
+                            error_message: err.to_string(),
+                        },
+                    });
+                    error!("matcher '{matcher}' failed: {err}", matcher = matcher.name);
+                }
             }
         }
 
-        if !matching_matchers.is_empty() {
-            let target_list = Vec::from_iter(targets.iter().copied());
+        receipts
+    }
 
-            info!(
-                "notification matched the following matchers: {}. The following targets will be notified: {}",
-                matching_matchers.join(", "),
-                target_list.join(", ")
-            );
-        } else {
-            info!("notification was not matched by any matcher");
+    fn matching_matchers_and_targets_from_receipts(
+        matcher_receipts: &[MatcherReceipt],
+    ) -> (Vec<String>, Vec<String>) {
+        let mut matchers = Vec::new();
+        let mut deduplicated_targets = HashSet::new();
+
+        for receipt in matcher_receipts {
+            if let MatcherReceiptStatus::Matched { targets, .. } = &receipt.status {
+                matchers.push(receipt.matcher.clone());
+                deduplicated_targets.extend(targets);
+            }
         }
 
-        targets
+        let mut targets = Vec::from_iter(deduplicated_targets.into_iter().cloned());
+        targets.sort();
+
+        matchers.sort();
+
+        (matchers, targets)
     }
 }
 
