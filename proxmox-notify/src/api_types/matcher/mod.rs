@@ -224,7 +224,7 @@ impl MatcherConfig {
     }
 
     /// Ensure the validity of this matcher.
-    pub(crate) fn ensure_valid(&mut self) -> Result<(), Error> {
+    pub fn ensure_valid(&mut self) -> Result<(), Error> {
         #[cfg(feature = "legacy-matchers")]
         self.ensure_no_ignored_properties()?;
         self.ensure_valid_expression()?;
