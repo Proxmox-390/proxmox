@@ -14730,6 +14730,10 @@ generate_array_field! {
             default: false,
             optional: true,
         },
+        "sync-time-on-resume": {
+            default: false,
+            optional: true,
+        },
         type: {
             optional: true,
             type: QemuConfigAgentType,
@@ -14755,6 +14759,13 @@ pub struct QemuConfigAgent {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fstrim_cloned_disks: Option<bool>,
+
+    /// Synchronize the guest's clock through QGA after operations that can
+    /// leave the guest's clock behind.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sync-time-on-resume")]
+    pub sync_time_on_resume: Option<bool>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "type")]
@@ -19355,6 +19366,10 @@ pub struct RestartCephServices {
             default: false,
             optional: true,
         },
+        "sync-time-on-resume": {
+            default: false,
+            optional: true,
+        },
     },
 )]
 /// Object.
@@ -19370,6 +19385,14 @@ pub struct ResumeQemu {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skiplock: Option<bool>,
+
+    /// Override the 'sync-time-on-resume' setting from the VM's guest agent
+    /// (QGA) config for this resume only. Controls whether the guest's clock is
+    /// synchronized after resuming the VM.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sync-time-on-resume")]
+    pub sync_time_on_resume: Option<bool>,
 }
 
 #[api(
@@ -19395,6 +19418,10 @@ pub struct RollbackLxcSnapshot {
             default: false,
             optional: true,
         },
+        "sync-time-on-resume": {
+            default: false,
+            optional: true,
+        },
     },
 )]
 /// Object.
@@ -19405,6 +19432,14 @@ pub struct RollbackQemuSnapshot {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<bool>,
+
+    /// Override the 'sync-time-on-resume' setting from the VM's guest agent
+    /// (QGA) config for this rollback only. Controls whether the guest's clock
+    /// is synchronized after the RAM state is restored.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sync-time-on-resume")]
+    pub sync_time_on_resume: Option<bool>,
 }
 
 #[api(
@@ -21151,6 +21186,10 @@ fn test_regex_compilation_41() {
             optional: true,
             type: String,
         },
+        "sync-time-on-resume": {
+            default: false,
+            optional: true,
+        },
         targetstorage: {
             items: {
                 description: "List item of type storage-pair.",
@@ -21211,6 +21250,15 @@ pub struct StartQemu {
     /// Some command save/restore state from this location.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stateuri: Option<String>,
+
+    /// Override the 'sync-time-on-resume' setting from the VM's guest agent
+    /// (QGA) config for this start only. Controls whether the guest's clock is
+    /// synchronized when starting a hibernated VM. No effect on a regular
+    /// start.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sync-time-on-resume")]
+    pub sync_time_on_resume: Option<bool>,
 
     /// Mapping from source to target storages. Providing only a single storage
     /// ID maps all source storages to that storage. Providing the special value

@@ -23816,6 +23816,13 @@
                                                    "guest-fsfreeze": {
                                                       "alias": "freeze-fs"
                                                    },
+                                                   "sync-time-on-resume": {
+                                                      "default": 0,
+                                                      "description": "Synchronize the guest's clock through QGA after operations that can leave the guest's clock behind.",
+                                                      "optional": 1,
+                                                      "type": "boolean",
+                                                      "verbose_description": "Whether to issue the 'guest-set-time' QEMU guest agent command to synchronize the guest's clock to the host's current time after operations that can leave the guest's clock behind. This happens when resuming from hibernation, resuming from a paused state, taking a snapshot, after a live migration, after a backup in suspend mode, and after rolling back to a snapshot that includes RAM. In these cases the guest's clock may still reflect an earlier time. The time is only synchronized when the QEMU Guest Agent option is enabled in the guest's configuration and the agent is running inside of the guest. For resume, hibernation resume and snapshot rollback, the synchronization can be overridden per operation."
+                                                   },
                                                    "type": {
                                                       "default": "virtio",
                                                       "description": "Select the agent type",
@@ -28894,6 +28901,12 @@
                                                       "optional": 1,
                                                       "type": "string"
                                                    },
+                                                   "sync-time-on-resume": {
+                                                      "description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this start only. Controls whether the guest's clock is synchronized when starting a hibernated VM. No effect on a regular start.",
+                                                      "optional": 1,
+                                                      "type": "boolean",
+                                                      "verbose_description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this start only. When enabled, the 'guest-set-time' QEMU guest agent command is issued to synchronize the guest's clock to the host's current time after the RAM state is restored, which happens here when starting a VM that was hibernated (suspended to disk). Without synchronization the guest's clock may still reflect the time from when the VM was hibernated. The time is only synchronized when the QEMU Guest Agent option is enabled in the guest's configuration and the agent is running inside of the guest."
+                                                   },
                                                    "targetstorage": {
                                                       "description": "Mapping from source to target storages. Providing only a single storage ID maps all source storages to that storage. Providing the special value '1' will map each source storage to itself.",
                                                       "format": "storage-pair-list",
@@ -29276,6 +29289,12 @@
                                                       "description": "Ignore locks - only root is allowed to use this option.",
                                                       "optional": 1,
                                                       "type": "boolean"
+                                                   },
+                                                   "sync-time-on-resume": {
+                                                      "description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this resume only. Controls whether the guest's clock is synchronized after resuming the VM.",
+                                                      "optional": 1,
+                                                      "type": "boolean",
+                                                      "verbose_description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this resume only. When enabled, the 'guest-set-time' QEMU guest agent command is issued to synchronize the guest's clock to the host's current time after resuming the VM from a paused or hibernated state. Without synchronization the guest's clock may still reflect the time from when the VM was paused or hibernated. The time is only synchronized when the QEMU Guest Agent option is enabled in the guest's configuration and the agent is running inside of the guest."
                                                    },
                                                    "vmid": {
                                                       "completion": ("Code")[],
@@ -31018,6 +31037,12 @@
                                                             "description": "Whether the VM should get started after rolling back successfully. (Note: VMs will be automatically started if the snapshot includes RAM.)",
                                                             "optional": 1,
                                                             "type": "boolean"
+                                                         },
+                                                         "sync-time-on-resume": {
+                                                            "description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this rollback only. Controls whether the guest's clock is synchronized after the RAM state is restored.",
+                                                            "optional": 1,
+                                                            "type": "boolean",
+                                                            "verbose_description": "Override the 'sync-time-on-resume' setting from the VM's guest agent (QGA) config for this rollback only. When enabled, the 'guest-set-time' QEMU guest agent command is issued to synchronize the guest's clock to the host's current time after rolling back to a snapshot that includes RAM. Without synchronization the guest's clock may still reflect the time from when the snapshot was taken. The time is only synchronized when the QEMU Guest Agent option is enabled in the guest's configuration and the agent is running inside of the guest."
                                                          },
                                                          "vmid": {
                                                             "completion": ("Code")[],
