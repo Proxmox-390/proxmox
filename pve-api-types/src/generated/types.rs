@@ -2080,6 +2080,11 @@ fn test_regex_compilation_4() {
             optional: true,
             type: String,
         },
+        "token-policy": {
+            format: &ApiStringFormat::PropertyString(&ClusterOptionsTokenPolicy::API_SCHEMA),
+            optional: true,
+            type: String,
+        },
         u2f: {
             format: &ApiStringFormat::PropertyString(&ClusterOptionsU2f::API_SCHEMA),
             optional: true,
@@ -2200,6 +2205,12 @@ pub struct ClusterOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "tag-style")]
     pub tag_style: Option<ClusterOptionsTagStyle>,
+
+    /// Cluster-wide policy for creating and updating API tokens, for example to
+    /// enforce an expiration date or privilege separation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "token-policy")]
+    pub token_policy: Option<ClusterOptionsTokenPolicy>,
 
     /// u2f
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2811,6 +2822,88 @@ pub enum ClusterOptionsTagStyleShape {
 }
 serde_plain::derive_display_from_serialize!(ClusterOptionsTagStyleShape);
 serde_plain::derive_fromstr_from_deserialize!(ClusterOptionsTagStyleShape);
+
+#[api(
+    properties: {
+        "allow-extension-on-regenerate": {
+            default: false,
+            optional: true,
+        },
+        "default-to-max-lifetime": {
+            default: false,
+            optional: true,
+        },
+        "disallow-expiry-extension": {
+            default: false,
+            optional: true,
+        },
+        "max-lifetime": {
+            minimum: 1,
+            optional: true,
+            type: Integer,
+        },
+        "require-expiry": {
+            default: false,
+            optional: true,
+        },
+        "require-privilege-separation": {
+            default: false,
+            optional: true,
+        },
+    },
+)]
+/// Object.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct ClusterOptionsTokenPolicy {
+    /// Allow extending the expiration date of an existing API token when its
+    /// secret is regenerated in the same request, despite
+    /// 'disallow-expiry-extension'. The maximum lifetime still applies.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "allow-extension-on-regenerate")]
+    pub allow_extension_on_regenerate: Option<bool>,
+
+    /// Give API tokens created without an expiration date the maximum lifetime
+    /// instead of rejecting them, for example for tools unaware of the policy.
+    /// Has no effect without 'max-lifetime'.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "default-to-max-lifetime")]
+    pub default_to_max_lifetime: Option<bool>,
+
+    /// Disallow moving the expiration date of existing API tokens later or
+    /// removing it, so that 'max-lifetime' cannot be circumvented by extending
+    /// tokens repeatedly. Shortening the expiration date or setting one on a
+    /// token that has none remains possible, and tokens can still be deleted
+    /// and recreated.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "disallow-expiry-extension")]
+    pub disallow_expiry_extension: Option<bool>,
+
+    /// Maximum lifetime of API tokens in seconds, counted from when the
+    /// expiration date is set, that is on creation or when an update changes
+    /// it. Implies 'require-expiry'.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "max-lifetime")]
+    pub max_lifetime: Option<u64>,
+
+    /// Require an expiration date for new API tokens and when changing the
+    /// expiration date of existing ones.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "require-expiry")]
+    pub require_expiry: Option<bool>,
+
+    /// Require privilege separation for new API tokens and when changing that
+    /// setting on existing ones, that is, disallow tokens with the full
+    /// privileges of their user.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "require-privilege-separation")]
+    pub require_privilege_separation: Option<bool>,
+}
 
 #[api(
     properties: {
@@ -4136,7 +4229,8 @@ pub struct CreateToken {
     pub comment: Option<String>,
 
     /// API token expiration date (seconds since epoch). '0' means no expiration
-    /// date.
+    /// date, or the maximum lifetime if the datacenter token policy sets
+    /// 'default-to-max-lifetime'.
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expire: Option<u64>,
@@ -21941,6 +22035,11 @@ fn test_regex_compilation_45() {
             optional: true,
             type: String,
         },
+        "token-policy": {
+            format: &ApiStringFormat::PropertyString(&ClusterOptionsTokenPolicy::API_SCHEMA),
+            optional: true,
+            type: String,
+        },
         u2f: {
             format: &ApiStringFormat::PropertyString(&ClusterOptionsU2f::API_SCHEMA),
             optional: true,
@@ -22061,6 +22160,12 @@ pub struct UpdateClusterOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(rename = "tag-style")]
     pub tag_style: Option<String>,
+
+    /// Cluster-wide policy for creating and updating API tokens, for example to
+    /// enforce an expiration date or privilege separation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "token-policy")]
+    pub token_policy: Option<String>,
 
     /// u2f
     #[serde(default, skip_serializing_if = "Option::is_none")]

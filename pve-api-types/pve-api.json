@@ -20454,6 +20454,50 @@
                               "optional": 1,
                               "type": "string"
                            },
+                           "token-policy": {
+                              "description": "Cluster-wide policy for creating and updating API tokens, for example to enforce an expiration date or privilege separation.",
+                              "format": {
+                                 "allow-extension-on-regenerate": {
+                                    "default": 0,
+                                    "description": "Allow extending the expiration date of an existing API token when its secret is regenerated in the same request, despite 'disallow-expiry-extension'. The maximum lifetime still applies.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 },
+                                 "default-to-max-lifetime": {
+                                    "default": 0,
+                                    "description": "Give API tokens created without an expiration date the maximum lifetime instead of rejecting them, for example for tools unaware of the policy. Has no effect without 'max-lifetime'.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 },
+                                 "disallow-expiry-extension": {
+                                    "default": 0,
+                                    "description": "Disallow moving the expiration date of existing API tokens later or removing it, so that 'max-lifetime' cannot be circumvented by extending tokens repeatedly. Shortening the expiration date or setting one on a token that has none remains possible, and tokens can still be deleted and recreated.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 },
+                                 "max-lifetime": {
+                                    "description": "Maximum lifetime of API tokens in seconds, counted from when the expiration date is set, that is on creation or when an update changes it. Implies 'require-expiry'.",
+                                    "format_description": "seconds",
+                                    "minimum": 1,
+                                    "optional": 1,
+                                    "type": "integer"
+                                 },
+                                 "require-expiry": {
+                                    "default": 0,
+                                    "description": "Require an expiration date for new API tokens and when changing the expiration date of existing ones.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 },
+                                 "require-privilege-separation": {
+                                    "default": 0,
+                                    "description": "Require privilege separation for new API tokens and when changing that setting on existing ones, that is, disallow tokens with the full privileges of their user.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 }
+                              },
+                              "optional": 1,
+                              "type": "string"
+                           },
                            "u2f": {
                               "description": "u2f",
                               "format": {
@@ -20570,6 +20614,7 @@
                            "registered-tags": ("Ref")["/root/0/children/18/info/GET/returns/properties/registered-tags"],
                            "replication": ("Ref")["/root/0/children/18/info/GET/returns/properties/replication"],
                            "tag-style": ("Ref")["/root/0/children/18/info/GET/returns/properties/tag-style"],
+                           "token-policy": ("Ref")["/root/0/children/18/info/GET/returns/properties/token-policy"],
                            "u2f": ("Ref")["/root/0/children/18/info/GET/returns/properties/u2f"],
                            "user-tag-access": ("Ref")["/root/0/children/18/info/GET/returns/properties/user-tag-access"],
                            "webauthn": ("Ref")["/root/0/children/18/info/GET/returns/properties/webauthn"]
@@ -59509,7 +59554,7 @@
                                              },
                                              "expire": {
                                                 "default": "same as user",
-                                                "description": "API token expiration date (seconds since epoch). '0' means no expiration date.",
+                                                "description": "API token expiration date (seconds since epoch). '0' means no expiration date, or the maximum lifetime if the datacenter token policy sets 'default-to-max-lifetime'.",
                                                 "minimum": 0,
                                                 "optional": 1,
                                                 "type": "integer"

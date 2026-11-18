@@ -492,6 +492,7 @@ for my $field (
     ['notify',           'ClusterOptionsNotify'],
     ['replication',      'ClusterOptionsReplication'],
     ['tag-style',        'ClusterOptionsTagStyle'],
+    ['token-policy',     'ClusterOptionsTokenPolicy'],
     ['u2f',              'ClusterOptionsU2f'],
     ['user-tag-access',  'ClusterOptionsUserTagAccess'],
     ['webauthn',         'ClusterOptionsWebauthn'],
