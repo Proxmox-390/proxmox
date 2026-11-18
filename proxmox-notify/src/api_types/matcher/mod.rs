@@ -1,9 +1,7 @@
-use std::collections::HashSet;
 use std::fmt::Debug;
 
 use proxmox_match_expression::Expression;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
 
 use proxmox_api_macro::api;
 use proxmox_schema::Updater;
@@ -384,45 +382,6 @@ pub enum DeleteableMatcherProperty {
     Expression,
     /// Delete `target`
     Target,
-}
-
-pub fn check_matches<'a>(
-    matchers: &'a [MatcherConfig],
-    notification: &Notification,
-) -> HashSet<&'a str> {
-    let mut targets = HashSet::new();
-    let mut matching_matchers = Vec::new();
-
-    for matcher in matchers {
-        if matcher.disable.unwrap_or_default() {
-            // Skip this matcher if it is disabled
-            info!("skipping disabled matcher '{name}'", name = matcher.name);
-            continue;
-        }
-
-        match matcher.matches(notification) {
-            Ok(Some(t)) => {
-                matching_matchers.push(matcher.name.as_str());
-                targets.extend(t.iter().map(|s| s.as_str()));
-            }
-            Ok(None) => {}
-            Err(err) => error!("matcher '{matcher}' failed: {err}", matcher = matcher.name),
-        }
-    }
-
-    if !matching_matchers.is_empty() {
-        let target_list = Vec::from_iter(targets.iter().copied());
-
-        info!(
-            "notification matched the following matchers: {}. The following targets will be notified: {}",
-            matching_matchers.join(", "),
-            target_list.join(", ")
-        );
-    } else {
-        info!("notification was not matched by any matcher");
-    }
-
-    targets
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use proxmox_uuid::Uuid;
 use serde::Deserialize;
@@ -187,7 +187,7 @@ impl Bus {
     ///
     /// Any errors will not be returned but only logged.
     pub fn send(&self, context: &Context, notification: &Notification) {
-        let targets = crate::api_types::check_matches(self.matchers.as_slice(), notification);
+        let targets = self.check_matches(notification);
 
         for target in targets {
             if let Some(endpoint) = self.endpoints.get(target) {
@@ -240,6 +240,42 @@ impl Bus {
         }
 
         Ok(())
+    }
+
+    fn check_matches(&self, notification: &Notification) -> HashSet<&str> {
+        let mut targets = HashSet::new();
+        let mut matching_matchers = Vec::new();
+
+        for matcher in &self.matchers {
+            if matcher.disable.unwrap_or_default() {
+                // Skip this matcher if it is disabled
+                info!("skipping disabled matcher '{name}'", name = matcher.name);
+                continue;
+            }
+
+            match matcher.matches(notification) {
+                Ok(Some(t)) => {
+                    matching_matchers.push(matcher.name.as_str());
+                    targets.extend(t.iter().map(|s| s.as_str()));
+                }
+                Ok(None) => {}
+                Err(err) => error!("matcher '{matcher}' failed: {err}", matcher = matcher.name),
+            }
+        }
+
+        if !matching_matchers.is_empty() {
+            let target_list = Vec::from_iter(targets.iter().copied());
+
+            info!(
+                "notification matched the following matchers: {}. The following targets will be notified: {}",
+                matching_matchers.join(", "),
+                target_list.join(", ")
+            );
+        } else {
+            info!("notification was not matched by any matcher");
+        }
+
+        targets
     }
 }
 
