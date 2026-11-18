@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 use crate::api_types::Origin;
 
-use crate::schema::ENTITY_NAME_SCHEMA;
+use super::schema::ENTITY_NAME_SCHEMA;
 
 /// This will be used as a section type in the public/private configuration file.
 pub const WEBHOOK_TYPENAME: &str = "webhook";

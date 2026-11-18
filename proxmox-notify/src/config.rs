@@ -7,11 +7,10 @@ use serde_json::Value;
 use tracing::error;
 
 use crate::api_types::{
-    GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig, MATCHER_TYPENAME, MatcherConfig,
-    SENDMAIL_TYPENAME, SMTP_TYPENAME, SendmailConfig, SmtpConfig, SmtpPrivateConfig,
+    BACKEND_NAME_SCHEMA, GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig, MATCHER_TYPENAME,
+    MatcherConfig, SENDMAIL_TYPENAME, SMTP_TYPENAME, SendmailConfig, SmtpConfig, SmtpPrivateConfig,
     WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig,
 };
-use crate::schema::BACKEND_NAME_SCHEMA;
 use crate::{Context, Error};
 
 /// Section config schema for the public config file.

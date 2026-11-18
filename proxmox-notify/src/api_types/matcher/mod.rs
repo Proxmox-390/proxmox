@@ -10,8 +10,9 @@ use proxmox_schema::Updater;
 use proxmox_schema::api_types::COMMENT_SCHEMA;
 
 use crate::api_types::Origin;
-use crate::schema::ENTITY_NAME_SCHEMA;
 use crate::{Error, Notification};
+
+use super::schema::ENTITY_NAME_SCHEMA;
 
 pub mod calendar;
 pub mod expression;

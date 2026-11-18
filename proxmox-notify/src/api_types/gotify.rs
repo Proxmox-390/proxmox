@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use proxmox_schema::{Updater, api, api_types::COMMENT_SCHEMA};
 
 use crate::api_types::Origin;
-use crate::schema::ENTITY_NAME_SCHEMA;
+
+use super::schema::ENTITY_NAME_SCHEMA;
 
 pub const GOTIFY_TYPENAME: &str = "gotify";
 

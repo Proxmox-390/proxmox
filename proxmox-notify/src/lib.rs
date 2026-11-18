@@ -8,7 +8,6 @@ pub mod config;
 pub mod context;
 pub mod endpoints;
 pub mod renderer;
-pub mod schema;
 
 #[cfg(feature = "send-impl")]
 pub mod send;

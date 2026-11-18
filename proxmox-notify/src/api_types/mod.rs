@@ -24,6 +24,9 @@ pub use smtp::*;
 mod matcher;
 pub use matcher::*;
 
+mod schema;
+pub use schema::*;
+
 #[api]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
