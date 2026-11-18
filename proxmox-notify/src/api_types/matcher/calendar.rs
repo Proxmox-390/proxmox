@@ -15,6 +15,7 @@ use super::MatchDirective;
 #[derive(Clone, Debug)]
 struct DailyDurationWrapper {
     schedule: String,
+    #[cfg_attr(target_arch = "wasm32", allow(unused))]
     daily_duration: DailyDuration,
 }
 
@@ -61,11 +62,19 @@ impl From<CalendarMatcher> for Expression<NotificationMatcher> {
 }
 
 impl MatchDirective for CalendarMatcher {
+    #[cfg(not(target_arch = "wasm32"))]
     fn matches(&self, notification: &Notification) -> Result<bool, Error> {
         self.schedule
             .daily_duration
             .time_match(notification.metadata.timestamp, false)
             .map_err(|err| Error::invalid_config_with_source("could not match timestamp", err))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn matches(&self, _notification: &Notification) -> Result<bool, Error> {
+        Err(Error::other(
+            "CalendarMatcher::matches not supported on wasm32",
+        ))
     }
 
     fn validate(&self) -> Result<(), Error> {
