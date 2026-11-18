@@ -11,6 +11,9 @@ use crate::queue::consumer::{QueueConsumer, QueueLockGuard, QueuedNotification};
 
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Time the queue may stay locked by somebody else before a warning is logged.
+const LOCKED_WARN_THRESHOLD: Duration = Duration::from_secs(5 * 60);
+
 /// Builder for the [`QueueWorker`] type.
 ///
 /// Construct this via [`QueueWorker::builder`] and
@@ -58,6 +61,7 @@ impl QueueWorkerBuilder {
             context: self.context,
             queue: self.queue,
             polling_backoff: PollingBackoff::new(self.interval.unwrap_or(DEFAULT_INTERVAL)),
+            locked_for: Duration::ZERO,
             retry_attempts: self.retry_attempts.unwrap_or(0),
 
             #[cfg(test)]
@@ -77,6 +81,8 @@ pub struct QueueWorker {
     queue: Arc<QueueConsumer>,
     polling_backoff: PollingBackoff,
     retry_attempts: u32,
+    /// Polling intervals summed up over the consecutive cycles skipped due to a locked queue.
+    locked_for: Duration,
 
     #[cfg(test)]
     history: Vec<HistoryEntry>,
@@ -111,9 +117,30 @@ impl QueueWorker {
         // Hold the queue lock for the whole cycle, so that no other consumer of the same queue
         // directory claims, requeues or resolves notifications concurrently.
         let lock_guard = match self.lock_queue().await {
-            Ok(Some(guard)) => Arc::new(guard),
+            Ok(Some(guard)) => {
+                if self.locked_for >= LOCKED_WARN_THRESHOLD {
+                    tracing::info!("notification queue is not locked anymore, processing it again");
+                }
+                self.locked_for = Duration::ZERO;
+                Arc::new(guard)
+            }
             Ok(None) => {
-                tracing::debug!("queue directory is locked by another consumer, skipping cycle");
+                let warned = self.locked_for >= LOCKED_WARN_THRESHOLD;
+                self.locked_for = self
+                    .locked_for
+                    .saturating_add(self.polling_backoff.active_interval());
+
+                if !warned && self.locked_for >= LOCKED_WARN_THRESHOLD {
+                    tracing::warn!(
+                        "notification queue has been locked by another process for at least {} \
+                        minutes, queued notifications are not sent until it is released",
+                        LOCKED_WARN_THRESHOLD.as_secs() / 60,
+                    );
+                } else {
+                    tracing::debug!(
+                        "queue directory is locked by another consumer, skipping cycle"
+                    );
+                }
                 return;
             }
             Err(err) => {
@@ -484,9 +511,16 @@ mod test {
         assert!(worker.history.is_empty());
         assert_eq!(worker.polling_backoff.error_count, 0);
 
+        while worker.locked_for < LOCKED_WARN_THRESHOLD {
+            run_single_cycle(&mut worker);
+        }
+        assert_eq!(worker.locked_for, LOCKED_WARN_THRESHOLD);
+        assert_eq!(setup.attempts(), [0]);
+
         drop(guard);
         run_single_cycle(&mut worker);
 
+        assert_eq!(worker.locked_for, Duration::ZERO);
         assert!(setup.attempts().is_empty());
         assert_eq!(
             worker.history,
