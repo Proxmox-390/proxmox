@@ -56,6 +56,15 @@ pub enum Error {
         source: Option<BoxedError>,
     },
 
+    /// A queued notification is invalid.
+    #[error("invalid file in notification queue: {err}", err = print_optional_error(.message, .source))]
+    InvalidQueuedNotification {
+        /// Description of the error.
+        message: String,
+        /// Underlying error, if any.
+        source: Option<BoxedError>,
+    },
+
     /// An operation on the notification queue failed.
     #[error("notification queue error: {err}", err = print_optional_error(.message, .source))]
     Queue {
@@ -159,6 +168,25 @@ impl Error {
         source: impl Into<BoxedError>,
     ) -> Self {
         Self::InvalidNotification {
+            message: s.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// Create an [`Error::InvalidQueuedNotification`] without an underlying error.
+    pub(crate) fn invalid_queued_notification(s: impl Into<String>) -> Self {
+        Self::InvalidQueuedNotification {
+            message: s.into(),
+            source: None,
+        }
+    }
+
+    /// Create an [`Error::InvalidQueuedNotification`] with an underlying error.
+    pub(crate) fn invalid_queued_notification_with_source(
+        s: impl Into<String>,
+        source: impl Into<BoxedError>,
+    ) -> Self {
+        Self::InvalidQueuedNotification {
             message: s.into(),
             source: Some(source.into()),
         }

@@ -16,6 +16,7 @@ const_format.workspace = true
 handlebars = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 lettre = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 tracing.workspace = true
 mail-parser = { workspace = true, optional = true }
 percent-encoding = { workspace = true, optional = true }
@@ -41,6 +42,7 @@ proxmox-time.workspace = true
 proxmox-uuid = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
+nix = { workspace = true, features = ["fs"] }
 pretty_assertions.workspace = true
 tempfile.workspace = true
 
@@ -80,3 +82,7 @@ pve-context = ["dep:proxmox-sys", "legacy-matchers"]
 pbs-context = ["dep:proxmox-sys", "legacy-matchers"]
 legacy-matchers = []
 queue-submitter = ["dep:proxmox-sys"]
+queue-worker = [
+    "dep:libc",
+    "proxmox-sys/timer",
+]
