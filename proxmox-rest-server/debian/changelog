@@ -1,3 +1,20 @@
+rust-proxmox-rest-server (1.3.2-1) trixie; urgency=medium
+
+  * check the length limit of a request against the path and query as sent,
+    not after normalizing the path, which drops empty segments. Requests
+    padded with slashes passed the limit, and their access log entry, which
+    gets cut at the limit, lost the endpoint.
+
+  * access log: log the size of streamed responses with unknown length, like
+    compressed API responses and chunked file downloads, as '-' instead of 0,
+    so these can be told apart from empty responses.
+
+  * leave the query out of the messages logged for failed requests, as query
+    parameters can contain passwords and users with the audit privilege can
+    read the system log through the API. The access log is unchanged.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 18 Nov 2026 01:42:29 +0100
+
 rust-proxmox-rest-server (1.3.1-1) trixie; urgency=medium
 
   * fix #6738: connection: log clients that close the connection before the
