@@ -1,4 +1,16 @@
 //! File-based notification queue and accompanying worker task.
+//!
+//! The queue directory is shared between the worker, running as root, and every process that may
+//! submit notifications, including unprivileged ones. It should be owned by root, belong to the
+//! group of the unprivileged submitters and have mode `3770`. Submitted files are not writable by
+//! the group, and the sticky bit allows only the owner of an entry to remove or rename it, so
+//! submitters cannot modify or remove each other's notifications. The setgid bit keeps the files
+//! in the directory's group. Parent directories must not be writable by submitters either, as
+//! that would allow them to replace the queue directory. The worker warns at startup about a queue
+//! directory that deviates from this, and about parent directories writable by others than their
+//! owner. A parent directory owned by a submitting user is not flagged, as products may keep the
+//! queue in the state directory of their unprivileged daemon, which submits most notifications
+//! anyway.
 
 #[cfg(any(feature = "queue-submitter", feature = "queue-worker"))]
 use std::path::Path;

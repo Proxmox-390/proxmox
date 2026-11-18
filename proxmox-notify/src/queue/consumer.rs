@@ -1,9 +1,9 @@
 //! Consumer side of the notification queue.
 
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{self, Read};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::{Error, Notification};
@@ -26,6 +26,25 @@ impl QueueConsumer {
         Self {
             queue_dir: base_dir.into(),
         }
+    }
+
+    /// Describe how the queue directory deviates from the expected setup.
+    ///
+    /// See the [module documentation](super) for the expected setup.
+    pub(crate) fn setup_problems(&self) -> Result<Vec<String>, Error> {
+        let euid = nix::unistd::geteuid().as_raw();
+
+        let metadata = std::fs::metadata(&self.queue_dir)
+            .map_err(|err| Error::queue_with_source("could not stat queue directory", err))?;
+        let mut problems = queue_dir_problems(&self.queue_dir, &metadata, euid);
+
+        for parent in self.queue_dir.ancestors().skip(1) {
+            if let Ok(metadata) = std::fs::metadata(parent) {
+                problems.extend(parent_dir_problem(parent, &metadata));
+            }
+        }
+
+        Ok(problems)
     }
 
     /// Try to acquire an exclusive lock on the queue directory without blocking.
@@ -206,6 +225,45 @@ impl QueueConsumer {
     }
 }
 
+fn queue_dir_problems(dir: &Path, metadata: &Metadata, euid: u32) -> Vec<String> {
+    let dir = dir.display();
+    let mode = metadata.mode();
+    let mut problems = Vec::new();
+
+    if metadata.uid() != euid {
+        problems.push(format!(
+            "{dir} is not owned by the user processing the queue"
+        ));
+    }
+
+    if mode & 0o002 != 0 {
+        problems.push(format!("{dir} is writable by everybody"));
+    }
+
+    if mode & 0o020 != 0 && mode & 0o1000 == 0 {
+        problems.push(format!(
+            "{dir} is writable by its group but lacks the sticky bit, so submitters can remove \
+            each other's notifications"
+        ));
+    }
+
+    problems
+}
+
+fn parent_dir_problem(dir: &Path, metadata: &Metadata) -> Option<String> {
+    let mode = metadata.mode();
+
+    if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+        Some(format!(
+            "parent directory {} is writable by others than its owner, who can replace the queue \
+            directory",
+            dir.display()
+        ))
+    } else {
+        None
+    }
+}
+
 /// Exclusive lock on the queue directory, released on drop.
 pub struct QueueLockGuard {
     _dir: File,
@@ -285,8 +343,6 @@ mod test {
 
     use tempfile::tempdir;
 
-    use proxmox_sys::fs::CreateOptions;
-
     use crate::queue::QueueSubmitter;
 
     use super::*;
@@ -299,7 +355,7 @@ mod test {
         let queued = consumer.queued_notifications().unwrap();
         assert!(queued.is_empty());
 
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
         let notification = Notification::template_builder("foo", ()).build().unwrap();
 
         submitter.submit(&notification).unwrap();
@@ -326,7 +382,7 @@ mod test {
 
         let consumer = QueueConsumer::new(base_dir.path());
 
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
         let notification = Notification::template_builder("foo", ()).build().unwrap();
 
         submitter.submit(&notification).unwrap();
@@ -354,7 +410,7 @@ mod test {
 
         let consumer = QueueConsumer::new(base_dir.path());
 
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
         let notification = Notification::template_builder("foo", ()).build().unwrap();
 
         submitter.submit(&notification).unwrap();
@@ -377,7 +433,7 @@ mod test {
         let base_dir = tempdir().unwrap();
 
         let consumer = QueueConsumer::new(base_dir.path());
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
 
         let notifications: Vec<_> = (0..5)
             .map(|_| Notification::template_builder("foo", ()).build().unwrap())
@@ -448,6 +504,39 @@ mod test {
 
         assert!(consumer.queued_notifications().unwrap().is_empty());
         assert_eq!(std::fs::read_dir(base_dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn test_setup_problems() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base_dir = tempdir().unwrap();
+        let path = base_dir.path();
+        let euid = nix::unistd::geteuid().as_raw();
+
+        let problems = |mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+            let metadata = std::fs::metadata(path).unwrap();
+            (
+                queue_dir_problems(path, &metadata, euid).len(),
+                parent_dir_problem(path, &metadata).is_some(),
+            )
+        };
+
+        assert_eq!(problems(0o3770), (0, false));
+        assert_eq!(problems(0o1700), (0, false));
+        assert_eq!(problems(0o0755), (0, false));
+        assert_eq!(problems(0o0770), (1, true));
+        assert_eq!(problems(0o0777), (2, true));
+        assert_eq!(problems(0o1777), (1, false));
+
+        // Not owned by the worker's user.
+        problems(0o3770);
+        let metadata = std::fs::metadata(path).unwrap();
+        assert_eq!(queue_dir_problems(path, &metadata, euid + 1).len(), 1);
+
+        // The checks of the actual parent directories depend on the test environment.
+        assert!(QueueConsumer::new(path).setup_problems().is_ok());
     }
 
     fn single_queued(consumer: &QueueConsumer) -> QueuedNotification {

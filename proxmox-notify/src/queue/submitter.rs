@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use nix::sys::stat::Mode;
 use proxmox_sys::fs::CreateOptions;
 
 use crate::{Error, Notification};
@@ -9,19 +10,18 @@ use crate::{Error, Notification};
 use super::MAX_NOTIFICATION_SIZE;
 
 /// Writes notifications to the queue directory.
+///
+/// Queued files are owned by the submitting process and readable, but not writable, by the group.
+/// See the [module documentation](super) for the setup of the queue directory.
 pub struct QueueSubmitter {
     queue_dir: PathBuf,
-    create_options: CreateOptions,
 }
 
 impl QueueSubmitter {
     /// Create a new submitter for the queue directory `base_dir`.
-    ///
-    /// Queued notification files are created with `create_options`.
-    pub fn new<P: Into<PathBuf>>(base_dir: P, create_options: CreateOptions) -> Self {
+    pub fn new<P: Into<PathBuf>>(base_dir: P) -> Self {
         Self {
             queue_dir: base_dir.into(),
-            create_options,
         }
     }
 
@@ -46,7 +46,9 @@ impl QueueSubmitter {
             )));
         }
 
-        proxmox_sys::fs::replace_file(&path, &bytes, self.create_options, true).map_err(|err| {
+        let create_options = CreateOptions::new().perm(Mode::from_bits_truncate(0o640));
+
+        proxmox_sys::fs::replace_file(&path, &bytes, create_options, true).map_err(|err| {
             Error::queue_with_source(
                 format!(
                     "failed to store serialized notification {}",
@@ -100,7 +102,7 @@ mod test {
     #[test]
     fn test_submit_multiple() {
         let base_dir = tempdir().unwrap();
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
 
         let notifications: Vec<_> = (0..3)
             .map(|_| Notification::template_builder("foo", ()).build().unwrap())
@@ -133,9 +135,26 @@ mod test {
     }
 
     #[test]
+    fn test_submit_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base_dir = tempdir().unwrap();
+        let submitter = QueueSubmitter::new(base_dir.path());
+
+        let notification = Notification::template_builder("foo", ()).build().unwrap();
+        submitter.submit(&notification).unwrap();
+
+        let path = base_dir
+            .path()
+            .join(format!("notification-{}", notification.id()));
+        let mode = std::fs::metadata(path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o640);
+    }
+
+    #[test]
     fn test_submit_missing_queue_dir() {
         let base_dir = tempdir().unwrap();
-        let submitter = QueueSubmitter::new(base_dir.path().join("missing"), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path().join("missing"));
 
         let notification = Notification::template_builder("foo", ()).build().unwrap();
         assert!(submitter.submit(&notification).is_err());
@@ -144,7 +163,7 @@ mod test {
     #[test]
     fn test_submit_max_size() {
         let base_dir = tempdir().unwrap();
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
 
         let notification = notification_with_size(MAX_NOTIFICATION_SIZE);
         submitter.submit(&notification).unwrap();
@@ -161,7 +180,7 @@ mod test {
     #[test]
     fn test_submit_oversized() {
         let base_dir = tempdir().unwrap();
-        let submitter = QueueSubmitter::new(base_dir.path(), CreateOptions::new());
+        let submitter = QueueSubmitter::new(base_dir.path());
 
         let notification = notification_with_size(MAX_NOTIFICATION_SIZE + 1);
         assert!(submitter.submit(&notification).is_err());

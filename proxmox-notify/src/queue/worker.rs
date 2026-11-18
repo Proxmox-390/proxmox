@@ -99,6 +99,8 @@ impl QueueWorker {
     ///
     /// This function does not return.
     pub async fn run(mut self) -> ! {
+        self.warn_about_queue_setup().await;
+
         loop {
             self.process_queued_notifications().await;
             self.wait().await;
@@ -247,6 +249,20 @@ impl QueueWorker {
         }
     }
 
+    async fn warn_about_queue_setup(&self) {
+        let queue = Arc::clone(&self.queue);
+
+        match tokio::task::spawn_blocking(move || queue.setup_problems()).await {
+            Ok(Ok(problems)) => {
+                for problem in problems {
+                    tracing::warn!("insecure notification queue setup: {problem}");
+                }
+            }
+            Ok(Err(err)) => tracing::warn!("could not check notification queue setup: {err}"),
+            Err(err) => tracing::warn!("could not check notification queue setup: {err}"),
+        }
+    }
+
     async fn lock_queue(&self) -> Result<Option<QueueLockGuard>, Error> {
         let queue = Arc::clone(&self.queue);
         tokio::task::spawn_blocking(move || queue.try_lock())
@@ -340,7 +356,6 @@ mod test {
     use std::cell::Cell;
     use std::time::SystemTime;
 
-    use proxmox_sys::fs::CreateOptions;
     use tempfile::{TempDir, tempdir};
 
     use crate::Notification;
@@ -362,7 +377,7 @@ mod test {
 
             Self {
                 consumer: QueueConsumer::new(dir.path()),
-                submitter: QueueSubmitter::new(dir.path(), CreateOptions::new()),
+                submitter: QueueSubmitter::new(dir.path()),
                 submitted: Cell::new(0),
                 dir,
             }

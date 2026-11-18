@@ -17,6 +17,7 @@ handlebars = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 lettre = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
+nix = { workspace = true, optional = true, features = ["fs", "user"] }
 tracing.workspace = true
 mail-parser = { workspace = true, optional = true }
 percent-encoding = { workspace = true, optional = true }
@@ -82,9 +83,10 @@ send-impl = [
 pve-context = ["dep:proxmox-sys", "legacy-matchers"]
 pbs-context = ["dep:proxmox-sys", "legacy-matchers"]
 legacy-matchers = []
-queue-submitter = ["dep:proxmox-sys"]
+queue-submitter = ["dep:nix", "dep:proxmox-sys"]
 queue-worker = [
     "dep:libc",
+    "dep:nix",
     "dep:tokio",
     "proxmox-sys/timer",
     "send-impl",
