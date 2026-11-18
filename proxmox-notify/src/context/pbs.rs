@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
 use serde::Deserialize;
 use tracing::error;
 
+use proxmox_http::ProxyConfig;
 use proxmox_schema::{ObjectSchema, Schema, StringSchema};
+use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
 use proxmox_section_config::{SectionConfig, SectionConfigPlugin};
 
 use crate::config::ConfigEntity;
@@ -99,9 +100,13 @@ impl ContextImpl for PBSContext {
             .unwrap_or_else(|| String::from("root"))
     }
 
-    fn http_proxy_config(&self) -> Option<String> {
+    fn proxy_config(&self) -> Result<Option<ProxyConfig>, BoxedError> {
         let content = common::attempt_file_read(PBS_NODE_CFG_FILENAME);
-        content.and_then(|content| common::lookup_datacenter_config_key(&content, "http-proxy"))
+        content
+            .and_then(|content| common::lookup_datacenter_config_key(&content, "http-proxy"))
+            .map(|url| ProxyConfig::parse_proxy_url(&url))
+            .transpose()
+            .map_err(Into::into)
     }
 
     fn default_config(&self) -> &'static SectionConfigData<ConfigEntity> {

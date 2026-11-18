@@ -18,7 +18,7 @@ use percent_encoding::AsciiSet;
 use serde_json::{Map, Value, json};
 
 use proxmox_http::client::sync::Client;
-use proxmox_http::{HttpClient, HttpOptions, ProxyConfig};
+use proxmox_http::{HttpClient, HttpOptions};
 
 use crate::api_types::{HttpMethod, WebhookConfig, WebhookPrivateConfig};
 use crate::renderer::TemplateType;
@@ -61,9 +61,7 @@ impl Endpoint for WebhookEndpoint {
 impl WebhookEndpoint {
     fn create_client(&self, context: &Context) -> Result<Client, Error> {
         let proxy_config = context
-            .http_proxy_config()
-            .map(|url| ProxyConfig::parse_proxy_url(&url))
-            .transpose()
+            .proxy_config()
             .map_err(|err| Error::invalid_config_with_source("invalid proxy configuration", err))?;
 
         let options = HttpOptions {

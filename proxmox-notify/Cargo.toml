@@ -28,7 +28,7 @@ thiserror.workspace = true
 proxmox-api-macro = { workspace = true, optional = true }
 proxmox-base64 = { workspace = true, optional = true }
 proxmox-config-digest = { workspace = true, features = ["openssl"], optional = true }
-proxmox-http = { workspace = true, features = ["client-sync"], optional = true }
+proxmox-http = { workspace = true, optional = true }
 proxmox-http-error = { workspace = true, optional = true }
 proxmox-human-byte = { workspace = true, optional = true }
 proxmox-match-expression = { workspace = true, optional = true }
@@ -48,6 +48,8 @@ default = ["send-impl", "api-types"]
 api-impl = [
     "api-types",
     "dep:proxmox-config-digest",
+    "dep:proxmox-http",
+    "proxmox-http/http-helpers",
     "dep:proxmox-http-error",
     "dep:proxmox-section-config",
 ]
@@ -67,6 +69,7 @@ send-impl = [
     "dep:percent-encoding",
     "dep:proxmox-base64",
     "dep:proxmox-http",
+    "proxmox-http/client-sync",
     "dep:proxmox-human-byte",
     "dep:proxmox-section-config",
     "dep:proxmox-sendmail",

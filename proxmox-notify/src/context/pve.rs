@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
 
 use crate::config::ConfigEntity;
@@ -50,9 +51,13 @@ impl ContextImpl for PVEContext {
             .unwrap_or_else(|| String::from("root"))
     }
 
-    fn http_proxy_config(&self) -> Option<String> {
+    fn proxy_config(&self) -> Result<Option<ProxyConfig>, BoxedError> {
         let content = common::attempt_file_read("/etc/pve/datacenter.cfg");
-        content.and_then(|content| common::lookup_datacenter_config_key(&content, "http_proxy"))
+        content
+            .and_then(|content| common::lookup_datacenter_config_key(&content, "http_proxy"))
+            .map(|url| ProxyConfig::parse_proxy_url(&url))
+            .transpose()
+            .map_err(Into::into)
     }
 
     fn default_config(&self) -> &'static SectionConfigData<ConfigEntity> {

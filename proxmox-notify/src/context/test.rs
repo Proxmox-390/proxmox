@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::SectionConfigData;
 
 use crate::Context;
@@ -31,8 +32,8 @@ impl ContextImpl for TestContext {
         "root".into()
     }
 
-    fn http_proxy_config(&self) -> Option<String> {
-        None
+    fn proxy_config(&self) -> Result<Option<ProxyConfig>, BoxedError> {
+        Ok(None)
     }
 
     fn default_config(&self) -> &'static SectionConfigData<ConfigEntity> {

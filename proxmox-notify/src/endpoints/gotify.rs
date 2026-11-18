@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use proxmox_http::client::sync::Client;
-use proxmox_http::{HttpClient, HttpOptions, ProxyConfig};
+use proxmox_http::{HttpClient, HttpOptions};
 
 use crate::api_types::{GotifyConfig, GotifyPrivateConfig};
 use crate::renderer::TemplateType;
@@ -83,9 +83,7 @@ impl Endpoint for GotifyEndpoint {
         ]);
 
         let proxy_config = context
-            .http_proxy_config()
-            .map(|url| ProxyConfig::parse_proxy_url(&url))
-            .transpose()
+            .proxy_config()
             .map_err(|err| Error::invalid_config_with_source("invalid proxy configuration", err))?;
 
         let options = HttpOptions {

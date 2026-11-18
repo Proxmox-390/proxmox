@@ -2,6 +2,7 @@ use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use std::sync::Arc;
 
+use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::SectionConfigData;
 
 use crate::config::ConfigEntity;
@@ -52,7 +53,7 @@ pub trait ContextImpl: Send + Sync + Debug {
     /// Default from address for sendmail-based targets
     fn default_sendmail_from(&self) -> String;
     /// Proxy configuration for the current node
-    fn http_proxy_config(&self) -> Option<String>;
+    fn proxy_config(&self) -> Result<Option<ProxyConfig>, BoxedError>;
     /// Return default config for built-in targets/matchers.
     fn default_config(&self) -> &'static SectionConfigData<ConfigEntity>;
     /// Return the path of `filename` from `source` and a certain (optional) `namespace`
