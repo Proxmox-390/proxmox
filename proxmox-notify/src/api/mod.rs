@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 
@@ -118,7 +116,7 @@ fn ensure_endpoints_exist<T: AsRef<str>>(
 }
 
 fn ensure_unique(config: &Config, entity: &str) -> Result<(), HttpError> {
-    if config.config.sections.contains_key(entity) {
+    if config.config.contains_key(entity) {
         http_bail!(
             BAD_REQUEST,
             "Cannot create '{entity}', an entity with the same name already exists"
@@ -141,14 +139,11 @@ fn get_referrers(config: &Config, entity: &str) -> Result<HashSet<String>, HttpE
 }
 
 fn ensure_safe_to_delete(config: &Config, entity: &str) -> Result<(), HttpError> {
-    if let Some(entity_config) = config.config.sections.get(entity) {
-        if let Ok(origin) = Origin::deserialize(&entity_config.1["origin"]) {
-            // Built-ins are never actually removed, only reset to their default
-            // It is thus safe to do the reset if another entity depends
-            // on it
-            if origin == Origin::Builtin || origin == Origin::ModifiedBuiltin {
-                return Ok(());
-            }
+    if let Some(entity_config) = config.config.get(entity) {
+        let origin = entity_config.origin().unwrap_or(Origin::UserCreated);
+
+        if origin == Origin::Builtin || origin == Origin::ModifiedBuiltin {
+            return Ok(());
         }
     } else {
         http_bail!(NOT_FOUND, "entity '{entity}' does not exist");
@@ -194,29 +189,6 @@ fn get_referenced_entities(config: &Config, entity: &str) -> HashSet<String> {
     }
 
     expanded
-}
-
-fn set_private_config_entry<T: Serialize>(
-    config: &mut Config,
-    private_config: T,
-    typename: &str,
-    name: &str,
-) -> Result<(), HttpError> {
-    config
-        .private_config
-        .set_data(name, typename, &private_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save private config for endpoint '{}': {e}",
-                name
-            )
-        })
-}
-
-fn remove_private_config_entry(config: &mut Config, name: &str) -> Result<(), HttpError> {
-    config.private_config.sections.remove(name);
-    Ok(())
 }
 
 #[cfg(test)]

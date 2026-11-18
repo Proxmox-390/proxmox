@@ -1,0 +1,8 @@
+gotify: test-gotify
+	token test
+
+smtp: test-smtp
+	password password
+
+webhook: test-webhook
+	secret name=key,value=c2VjcmV0

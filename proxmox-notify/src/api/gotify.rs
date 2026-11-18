@@ -1,12 +1,14 @@
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::http_err;
 use crate::api_types::{
-    DeleteableGotifyProperty, GOTIFY_TYPENAME, GotifyConfig, GotifyConfigUpdater,
-    GotifyPrivateConfig, GotifyPrivateConfigUpdater,
+    DeleteableGotifyProperty, GotifyConfig, GotifyConfigUpdater, GotifyPrivateConfig,
+    GotifyPrivateConfigUpdater,
 };
+use crate::config::{ConfigEntity, PrivateConfigEntity};
 
 /// Get a list of all gotify endpoints.
 ///
@@ -14,10 +16,10 @@ use crate::api_types::{
 /// Returns a list of all gotify endpoints or a `HttpError` if the config is
 /// erroneous (`500 Internal server error`).
 pub fn get_endpoints(config: &Config) -> Result<Vec<GotifyConfig>, HttpError> {
-    config
-        .config
-        .convert_to_typed_array(GOTIFY_TYPENAME)
-        .map_err(|e| http_err!(NOT_FOUND, "Could not fetch endpoints: {e}"))
+    Ok(convert_to_typed_array!(config.config, ConfigEntity::Gotify)
+        .into_iter()
+        .cloned()
+        .collect())
 }
 
 /// Get gotify endpoint with given `name`
@@ -25,10 +27,9 @@ pub fn get_endpoints(config: &Config) -> Result<Vec<GotifyConfig>, HttpError> {
 /// The caller is responsible for any needed permission checks.
 /// Returns the endpoint or a `HttpError` if the endpoint was not found (`404 Not found`).
 pub fn get_endpoint(config: &Config, name: &str) -> Result<GotifyConfig, HttpError> {
-    config
-        .config
-        .lookup(GOTIFY_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
+    lookup!(config.config, name, ConfigEntity::Gotify)
+        .cloned()
+        .ok_or_else(|| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
 }
 
 /// Add a new gotify endpoint.
@@ -52,18 +53,17 @@ pub fn add_endpoint(
 
     super::ensure_unique(config, &endpoint_config.name)?;
 
-    set_private_config_entry(config, &private_endpoint_config)?;
+    config.private_config.insert(
+        private_endpoint_config.name.clone(),
+        PrivateConfigEntity::Gotify(private_endpoint_config),
+    );
 
-    config
-        .config
-        .set_data(&endpoint_config.name, GOTIFY_TYPENAME, &endpoint_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint_config.name
-            )
-        })
+    config.config.insert(
+        endpoint_config.name.clone(),
+        ConfigEntity::Gotify(endpoint_config),
+    );
+
+    Ok(())
 }
 
 /// Update existing gotify endpoint
@@ -99,13 +99,13 @@ pub fn update_endpoint(
     }
 
     if let Some(token) = private_endpoint_config_updater.token {
-        set_private_config_entry(
-            config,
-            &GotifyPrivateConfig {
+        config.private_config.insert(
+            name,
+            PrivateConfigEntity::Gotify(GotifyPrivateConfig {
                 name: name.into(),
                 token,
-            },
-        )?;
+            }),
+        );
     }
 
     if let Some(comment) = endpoint_config_updater.comment {
@@ -116,15 +116,9 @@ pub fn update_endpoint(
         endpoint.disable = Some(disable);
     }
 
-    config
-        .config
-        .set_data(name, GOTIFY_TYPENAME, &endpoint)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{name}': {e}"
-            )
-        })
+    config.config.insert(name, ConfigEntity::Gotify(endpoint));
+
+    Ok(())
 }
 
 /// Delete existing gotify endpoint
@@ -139,30 +133,9 @@ pub fn delete_gotify_endpoint(config: &mut Config, name: &str) -> Result<(), Htt
     let _ = get_endpoint(config, name)?;
     super::ensure_safe_to_delete(config, name)?;
 
-    remove_private_config_entry(config, name)?;
-    config.config.sections.remove(name);
+    config.private_config.remove(name);
+    config.config.remove(name);
 
-    Ok(())
-}
-
-fn set_private_config_entry(
-    config: &mut Config,
-    private_config: &GotifyPrivateConfig,
-) -> Result<(), HttpError> {
-    config
-        .private_config
-        .set_data(&private_config.name, GOTIFY_TYPENAME, private_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save private config for endpoint '{}': {e}",
-                private_config.name
-            )
-        })
-}
-
-fn remove_private_config_entry(config: &mut Config, name: &str) -> Result<(), HttpError> {
-    config.private_config.sections.remove(name);
     Ok(())
 }
 
@@ -255,13 +228,15 @@ mod tests {
 
         assert_eq!(endpoint.server, "newhost".to_string());
 
-        let token = config
-            .private_config
-            .lookup::<GotifyPrivateConfig>(GOTIFY_TYPENAME, "gotify-endpoint")
-            .unwrap()
-            .token;
+        let token = &lookup!(
+            config.private_config,
+            "gotify-endpoint",
+            PrivateConfigEntity::Gotify
+        )
+        .unwrap()
+        .token;
 
-        assert_eq!(token, "changedtoken".to_string());
+        assert_eq!(token, "changedtoken");
         assert_eq!(endpoint.comment, Some("newcomment".to_string()));
 
         // Test property deletion

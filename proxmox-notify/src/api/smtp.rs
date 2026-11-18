@@ -1,12 +1,14 @@
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::{http_bail, http_err};
 use crate::api_types::{
-    DeleteableSmtpProperty, SMTP_TYPENAME, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
+    DeleteableSmtpProperty, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
     SmtpPrivateConfigUpdater,
 };
+use crate::config::{ConfigEntity, PrivateConfigEntity};
 
 /// Get a list of all smtp endpoints.
 ///
@@ -14,10 +16,10 @@ use crate::api_types::{
 /// Returns a list of all smtp endpoints or a `HttpError` if the config is
 /// erroneous (`500 Internal server error`).
 pub fn get_endpoints(config: &Config) -> Result<Vec<SmtpConfig>, HttpError> {
-    config
-        .config
-        .convert_to_typed_array(SMTP_TYPENAME)
-        .map_err(|e| http_err!(NOT_FOUND, "Could not fetch endpoints: {e}"))
+    Ok(convert_to_typed_array!(config.config, ConfigEntity::Smtp)
+        .into_iter()
+        .cloned()
+        .collect())
 }
 
 /// Get smtp endpoint with given `name`.
@@ -25,10 +27,9 @@ pub fn get_endpoints(config: &Config) -> Result<Vec<SmtpConfig>, HttpError> {
 /// The caller is responsible for any needed permission checks.
 /// Returns the endpoint or a `HttpError` if the endpoint was not found (`404 Not found`).
 pub fn get_endpoint(config: &Config, name: &str) -> Result<SmtpConfig, HttpError> {
-    config
-        .config
-        .lookup(SMTP_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
+    lookup!(config.config, name, ConfigEntity::Smtp)
+        .cloned()
+        .ok_or_else(|| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
 }
 
 /// Add a new smtp endpoint.
@@ -58,23 +59,17 @@ pub fn add_endpoint(
         );
     }
 
-    super::set_private_config_entry(
-        config,
-        private_endpoint_config,
-        SMTP_TYPENAME,
-        &endpoint_config.name,
-    )?;
+    config.private_config.insert(
+        private_endpoint_config.name.clone(),
+        PrivateConfigEntity::Smtp(private_endpoint_config),
+    );
 
-    config
-        .config
-        .set_data(&endpoint_config.name, SMTP_TYPENAME, &endpoint_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint_config.name
-            )
-        })
+    config.config.insert(
+        endpoint_config.name.clone(),
+        ConfigEntity::Smtp(endpoint_config),
+    );
+
+    Ok(())
 }
 
 /// Update existing smtp endpoint
@@ -104,15 +99,15 @@ pub fn update_endpoint(
                 DeleteableSmtpProperty::Disable => endpoint.disable = None,
                 DeleteableSmtpProperty::Mailto => endpoint.mailto.clear(),
                 DeleteableSmtpProperty::MailtoUser => endpoint.mailto_user.clear(),
-                DeleteableSmtpProperty::Password => super::set_private_config_entry(
-                    config,
-                    SmtpPrivateConfig {
-                        name: name.to_string(),
-                        password: None,
-                    },
-                    SMTP_TYPENAME,
-                    name,
-                )?,
+                DeleteableSmtpProperty::Password => {
+                    config.private_config.insert(
+                        name,
+                        PrivateConfigEntity::Smtp(SmtpPrivateConfig {
+                            name: name.into(),
+                            password: None,
+                        }),
+                    );
+                }
                 DeleteableSmtpProperty::Port => endpoint.port = None,
                 DeleteableSmtpProperty::Username => endpoint.username = None,
             }
@@ -141,15 +136,13 @@ pub fn update_endpoint(
         endpoint.mode = Some(mode);
     }
     if let Some(password) = private_endpoint_config_updater.password {
-        super::set_private_config_entry(
-            config,
-            SmtpPrivateConfig {
+        config.private_config.insert(
+            name,
+            PrivateConfigEntity::Smtp(SmtpPrivateConfig {
                 name: name.into(),
                 password: Some(password),
-            },
-            SMTP_TYPENAME,
-            name,
-        )?;
+            }),
+        );
     }
 
     if let Some(author) = updater.author {
@@ -171,16 +164,9 @@ pub fn update_endpoint(
         );
     }
 
-    config
-        .config
-        .set_data(name, SMTP_TYPENAME, &endpoint)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint.name
-            )
-        })
+    config.config.insert(name, ConfigEntity::Smtp(endpoint));
+
+    Ok(())
 }
 
 /// Delete existing smtp endpoint
@@ -195,8 +181,9 @@ pub fn delete_endpoint(config: &mut Config, name: &str) -> Result<(), HttpError>
     let _ = get_endpoint(config, name)?;
     super::ensure_safe_to_delete(config, name)?;
 
-    super::remove_private_config_entry(config, name)?;
-    config.config.sections.remove(name);
+    config.private_config.remove(name);
+
+    config.config.remove(name);
 
     Ok(())
 }

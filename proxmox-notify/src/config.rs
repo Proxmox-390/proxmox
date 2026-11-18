@@ -1,138 +1,40 @@
-use std::sync::OnceLock;
-
 use proxmox_config_digest::ConfigDigest;
-use proxmox_schema::{ApiType, ObjectSchema};
-use proxmox_section_config::{SectionConfig, SectionConfigData, SectionConfigPlugin};
-use serde_json::Value;
-use tracing::error;
+use proxmox_schema::api;
+use proxmox_schema::api_types::SAFE_ID_FORMAT;
+use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
+use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::api_types::{
-    BACKEND_NAME_SCHEMA, GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig, MATCHER_TYPENAME,
-    MatcherConfig, SENDMAIL_TYPENAME, SMTP_TYPENAME, SendmailConfig, SmtpConfig, SmtpPrivateConfig,
-    WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig,
+    GotifyConfig, GotifyPrivateConfig, MatcherConfig, Origin, SendmailConfig, SmtpConfig,
+    SmtpPrivateConfig, WebhookConfig, WebhookPrivateConfig,
 };
 
-/// Section config schema for the public config file.
-pub fn config_parser() -> &'static SectionConfig {
-    static CONFIG: OnceLock<SectionConfig> = OnceLock::new();
-    CONFIG.get_or_init(config_init)
-}
-
-/// Section config schema for the private config file.
-pub fn private_config_parser() -> &'static SectionConfig {
-    static CONFIG: OnceLock<SectionConfig> = OnceLock::new();
-    CONFIG.get_or_init(private_config_init)
-}
-
-fn config_init() -> SectionConfig {
-    let mut config = SectionConfig::new(&BACKEND_NAME_SCHEMA);
-
-    {
-        const SENDMAIL_SCHEMA: &ObjectSchema = SendmailConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            SENDMAIL_TYPENAME.to_string(),
-            Some(String::from("name")),
-            SENDMAIL_SCHEMA,
-        ));
-    }
-    {
-        const SMTP_SCHEMA: &ObjectSchema = SmtpConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            SMTP_TYPENAME.to_string(),
-            Some(String::from("name")),
-            SMTP_SCHEMA,
-        ));
-    }
-    {
-        const GOTIFY_SCHEMA: &ObjectSchema = GotifyConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            GOTIFY_TYPENAME.to_string(),
-            Some(String::from("name")),
-            GOTIFY_SCHEMA,
-        ));
-    }
-    {
-        const WEBHOOK_SCHEMA: &ObjectSchema = WebhookConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            WEBHOOK_TYPENAME.to_string(),
-            Some(String::from("name")),
-            WEBHOOK_SCHEMA,
-        ));
-    }
-
-    const MATCHER_SCHEMA: &ObjectSchema = MatcherConfig::API_SCHEMA.unwrap_object_schema();
-    config.register_plugin(SectionConfigPlugin::new(
-        MATCHER_TYPENAME.to_string(),
-        Some(String::from("name")),
-        MATCHER_SCHEMA,
-    ));
-
-    config
-}
-
-fn private_config_init() -> SectionConfig {
-    let mut config = SectionConfig::new(&BACKEND_NAME_SCHEMA);
-
-    const GOTIFY_SCHEMA: &ObjectSchema = GotifyPrivateConfig::API_SCHEMA.unwrap_object_schema();
-    config.register_plugin(SectionConfigPlugin::new(
-        GOTIFY_TYPENAME.to_string(),
-        Some(String::from("name")),
-        GOTIFY_SCHEMA,
-    ));
-
-    const SMTP_SCHEMA: &ObjectSchema = SmtpPrivateConfig::API_SCHEMA.unwrap_object_schema();
-    config.register_plugin(SectionConfigPlugin::new(
-        SMTP_TYPENAME.to_string(),
-        Some(String::from("name")),
-        SMTP_SCHEMA,
-    ));
-
-    const WEBHOOK_SCHEMA: &ObjectSchema = WebhookPrivateConfig::API_SCHEMA.unwrap_object_schema();
-    config.register_plugin(SectionConfigPlugin::new(
-        WEBHOOK_TYPENAME.to_string(),
-        Some(String::from("name")),
-        WEBHOOK_SCHEMA,
-    ));
-
-    config
-}
-
-fn parse_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+fn parse_config(
+    raw_config: &str,
+) -> Result<(SectionConfigData<ConfigEntity>, ConfigDigest), Error> {
     let digest = ConfigDigest::from_slice(raw_config.as_bytes());
-    let data = config_parser()
-        .parse("notifications.cfg", raw_config)
+    let data = ConfigEntity::parse_section_config("notifications.cfg", raw_config)
         .map_err(Error::config_deserialization)?;
 
     Ok((data, digest))
 }
 
-fn parse_private_config(raw_config: &str) -> Result<(SectionConfigData, ConfigDigest), Error> {
+fn parse_private_config(
+    raw_config: &str,
+) -> Result<(SectionConfigData<PrivateConfigEntity>, ConfigDigest), Error> {
     let digest = ConfigDigest::from_slice(raw_config.as_bytes());
-    let data = private_config_parser()
-        .parse("priv/notifications.cfg", raw_config)
+    let data = PrivateConfigEntity::parse_section_config("priv/notifications.cfg", raw_config)
         .map_err(Error::config_deserialization)?;
 
     Ok((data, digest))
-}
-
-fn write(config: &SectionConfigData) -> Result<String, Error> {
-    config_parser()
-        .write("notifications.cfg", config)
-        .map_err(Error::config_serialization)
-}
-
-fn write_private(config: &SectionConfigData) -> Result<String, Error> {
-    private_config_parser()
-        .write("priv/notifications.cfg", config)
-        .map_err(Error::config_serialization)
 }
 
 /// Notification configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
-    pub(crate) config: SectionConfigData,
-    pub(crate) private_config: SectionConfigData,
+    pub(crate) config: SectionConfigData<ConfigEntity>,
+    pub(crate) private_config: SectionConfigData<PrivateConfigEntity>,
     digest: ConfigDigest,
 }
 
@@ -141,53 +43,38 @@ impl Config {
     pub fn parse_section_config(
         raw_config: &str,
         raw_private_config: &str,
-        builtin_config: Option<&SectionConfigData>,
+        builtin_config: Option<&SectionConfigData<ConfigEntity>>,
     ) -> Result<Self, Error> {
         let (mut config, digest) = parse_config(raw_config)?;
         let (private_config, _) = parse_private_config(raw_private_config)?;
 
         if let Some(builtin_config) = builtin_config {
-            for (key, (builtin_typename, builtin_value)) in &builtin_config.sections {
-                if let Some((typename, value)) = config.sections.get_mut(key) {
-                    if builtin_typename == typename && value == builtin_value {
+            for (key, builtin_value) in builtin_config {
+                if let Some(value) = config.get_mut(key) {
+                    if value == builtin_value {
                         // Entry is built-in and the config entry section in notifications.cfg
                         // is exactly the same.
-                        if let Some(obj) = value.as_object_mut() {
-                            obj.insert("origin".to_string(), Value::String("builtin".into()));
-                        } else {
-                            error!("section config entry is not an object. This should not happen");
-                        }
+                        value.set_origin(Some(Origin::Builtin));
                     } else {
                         // Entry is built-in, but it has been modified by the user.
-                        if let Some(obj) = value.as_object_mut() {
-                            obj.insert(
-                                "origin".to_string(),
-                                Value::String("modified-builtin".into()),
-                            );
-                        } else {
-                            error!("section config entry is not an object. This should not happen");
-                        }
+                        value.set_origin(Some(Origin::ModifiedBuiltin));
                     }
                 } else {
-                    let mut val = builtin_value.clone();
-
-                    if let Some(obj) = val.as_object_mut() {
-                        obj.insert("origin".to_string(), Value::String("builtin".into()));
-                    } else {
-                        error!("section config entry is not an object. This should not happen");
-                    }
-                    config
-                        .set_data(key, builtin_typename, val)
-                        .map_err(|err| Error::ConfigDeserialization(err.into()))?;
+                    // If it doesn't exist, we insert the builtin
+                    let mut value = builtin_value.clone();
+                    value.set_origin(Some(Origin::Builtin));
+                    config.insert(key.to_string(), value);
                 }
             }
         }
 
-        for (_, (_, value)) in config.sections.iter_mut() {
-            if let Some(obj) = value.as_object_mut() {
-                if obj.get("origin").is_none() {
-                    obj.insert("origin".to_string(), Value::String("user-created".into()));
-                }
+        let keys: Vec<String> = config.keys().cloned().collect();
+
+        for key in keys {
+            if let Some(value) = config.get_mut(&key)
+                && value.origin().is_none()
+            {
+                value.set_origin(Some(Origin::UserCreated));
             }
         }
 
@@ -200,25 +87,148 @@ impl Config {
 
     /// Serialize config
     pub fn to_section_config(&self) -> Result<(String, String), Error> {
-        let mut c = self.config.clone();
-        for (_, (_, value)) in c.sections.iter_mut() {
-            // Remove 'origin' parameter, we do not want it in our
-            // config fields
-            // TODO: Check if there is a better way for this, maybe a
-            // separate type for API responses?
-            if let Some(obj) = value.as_object_mut() {
-                obj.remove("origin");
-            } else {
-                error!("section config entry is not an object. This should not happen");
+        let mut configs_without_origin = SectionConfigData::default();
+
+        for (name, section) in &self.config {
+            match section {
+                ConfigEntity::Sendmail(config) => {
+                    let mut config = config.clone();
+                    config.origin = None;
+                    configs_without_origin.insert(name, ConfigEntity::Sendmail(config));
+                }
+                ConfigEntity::Smtp(config) => {
+                    let mut config = config.clone();
+                    config.origin = None;
+                    configs_without_origin.insert(name, ConfigEntity::Smtp(config));
+                }
+                ConfigEntity::Gotify(config) => {
+                    let mut config = config.clone();
+                    config.origin = None;
+                    configs_without_origin.insert(name, ConfigEntity::Gotify(config));
+                }
+                ConfigEntity::Webhook(config) => {
+                    let mut config = config.clone();
+                    config.origin = None;
+                    configs_without_origin.insert(name, ConfigEntity::Webhook(config));
+                }
+                ConfigEntity::Matcher(config) => {
+                    let mut config = config.clone();
+                    config.origin = None;
+                    configs_without_origin.insert(name, ConfigEntity::Matcher(config));
+                }
             }
         }
 
-        Ok((write(&c)?, write_private(&self.private_config)?))
+        let config_str =
+            ConfigEntity::write_section_config("notifications.cfg", &configs_without_origin)
+                .map_err(Error::config_serialization)?;
+        let private_config_str = PrivateConfigEntity::write_section_config(
+            "priv/notifications.cfg",
+            &self.private_config,
+        )
+        .map_err(Error::config_serialization)?;
+
+        Ok((config_str, private_config_str))
     }
 
     /// Returns the SHA256 digest of the configuration.
     /// The digest is only computed once when the configuration deserialized.
     pub fn digest(&self) -> &ConfigDigest {
         &self.digest
+    }
+}
+
+#[api(
+    "id-property": "name",
+    "id-schema": {
+        type: String,
+        description: "Notification config entity name.",
+        min_length: 3,
+        max_length: 32,
+        format: &SAFE_ID_FORMAT,
+    },
+)]
+/// Config entity in the notification config file.
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "kebab-case", tag = "type")]
+pub enum ConfigEntity {
+    /// Sendmail endpoint.
+    Sendmail(SendmailConfig),
+    /// Gotify endpoint.
+    Gotify(GotifyConfig),
+    /// SMTP endpoint.
+    Smtp(SmtpConfig),
+    /// Webhook endpoint.
+    Webhook(WebhookConfig),
+    /// Matcher configuration.
+    Matcher(MatcherConfig),
+}
+
+impl ConfigEntity {
+    pub(crate) fn set_origin(&mut self, origin: Option<Origin>) {
+        match self {
+            ConfigEntity::Sendmail(config) => config.origin = origin,
+            ConfigEntity::Gotify(config) => config.origin = origin,
+            ConfigEntity::Smtp(config) => config.origin = origin,
+            ConfigEntity::Webhook(config) => config.origin = origin,
+            ConfigEntity::Matcher(config) => config.origin = origin,
+        }
+    }
+
+    pub(crate) fn origin(&self) -> Option<Origin> {
+        match self {
+            ConfigEntity::Sendmail(config) => config.origin,
+            ConfigEntity::Gotify(config) => config.origin,
+            ConfigEntity::Smtp(config) => config.origin,
+            ConfigEntity::Webhook(config) => config.origin,
+            ConfigEntity::Matcher(config) => config.origin,
+        }
+    }
+}
+
+#[api(
+    "id-property": "name",
+    "id-schema": {
+        type: String,
+        description: "Notification config entity name.",
+        min_length: 3,
+        max_length: 32,
+        format: &SAFE_ID_FORMAT,
+    },
+)]
+/// Config entity in the private notification config file.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "type")]
+pub enum PrivateConfigEntity {
+    /// Private config for a gotify endpoint.
+    Gotify(GotifyPrivateConfig),
+    /// Private config for an SMTP endpoint.
+    Smtp(SmtpPrivateConfig),
+    /// Private config for a webhook endpoint.
+    Webhook(WebhookPrivateConfig),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG_REF: &str = include_str!("../testdata/notifications.cfg.ref");
+    const PRIV_CONFIG_REF: &str = include_str!("../testdata/notifications-priv.cfg.ref");
+
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn section_config_roundtrip() {
+        let config = Config::parse_section_config(CONFIG_REF, PRIV_CONFIG_REF, None).unwrap();
+
+        assert_eq!(
+            config.digest().to_string(),
+            "53554a97ca1747b69582f7cde5d4493f68b77c0d5946ce593a59547c9638d504"
+        );
+
+        let (public_config, private_config) = config.to_section_config().unwrap();
+
+        assert_eq!(public_config, CONFIG_REF);
+        assert_eq!(private_config, PRIV_CONFIG_REF);
     }
 }

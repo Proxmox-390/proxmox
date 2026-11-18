@@ -1,15 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 use proxmox_uuid::Uuid;
-use serde::Deserialize;
 use serde_json::json;
 use tracing::{error, info};
 
-use crate::api_types::{GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig};
-use crate::api_types::{MATCHER_TYPENAME, MatcherConfig};
-use crate::api_types::{SENDMAIL_TYPENAME, SendmailConfig};
-use crate::api_types::{SMTP_TYPENAME, SmtpConfig, SmtpPrivateConfig};
-use crate::api_types::{WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig};
+use crate::api_types::MatcherConfig;
+use crate::config::{ConfigEntity, PrivateConfigEntity};
 use crate::endpoints::Endpoint;
 use crate::endpoints::gotify::GotifyEndpoint;
 use crate::endpoints::sendmail::SendmailEndpoint;
@@ -48,64 +45,8 @@ struct Bus {
     matchers: Vec<MatcherConfig>,
 }
 
-macro_rules! parse_endpoints_with_private_config {
-    ($config:ident, $public_config:ty, $private_config:ty, $endpoint_type:ident, $type_name:expr) => {
-        (|| -> Result<Vec<Box<dyn Endpoint>>, Error> {
-            let mut endpoints = Vec::<Box<dyn Endpoint>>::new();
-
-            let configs: Vec<$public_config> = $config
-                .config
-                .convert_to_typed_array($type_name)
-                .map_err(|err| Error::ConfigDeserialization(err.into()))?;
-
-            for config in configs {
-                match $config.private_config.sections.get(&config.name) {
-                    Some((section_type_name, private_config)) => {
-                        if $type_name != section_type_name {
-                            error!(
-                                "Could not instantiate endpoint '{name}': \
-                                private config has wrong type",
-                                name = config.name
-                            );
-                        }
-                        let private_config = <$private_config>::deserialize(private_config)
-                            .map_err(|err| Error::ConfigDeserialization(err.into()))?;
-
-                        endpoints.push(Box::new($endpoint_type {
-                            config,
-                            private_config: private_config.clone(),
-                        }));
-                    }
-                    None => error!(
-                        "Could not instantiate endpoint '{name}': \
-                            private config does not exist",
-                        name = config.name
-                    ),
-                }
-            }
-
-            Ok(endpoints)
-        })()
-    };
-}
-
-macro_rules! parse_endpoints_without_private_config {
-    ($config:ident, $public_config:ty, $endpoint_type:ident, $type_name:expr) => {
-        (|| -> Result<Vec<Box<dyn Endpoint>>, Error> {
-            let mut endpoints = Vec::<Box<dyn Endpoint>>::new();
-
-            let configs: Vec<$public_config> = $config
-                .config
-                .convert_to_typed_array($type_name)
-                .map_err(|err| Error::ConfigDeserialization(err.into()))?;
-
-            for config in configs {
-                endpoints.push(Box::new($endpoint_type { config }));
-            }
-
-            Ok(endpoints)
-        })()
-    };
+fn log_missing_private_config(endpoint_name: &str) {
+    error!("Could not instantiate endpoint '{endpoint_name}': private config does not exist");
 }
 
 impl Bus {
@@ -113,58 +54,73 @@ impl Bus {
     pub fn from_config(config: &Config) -> Result<Self, Error> {
         let mut endpoints = HashMap::new();
 
-        // Instantiate endpoints
-        endpoints.extend(
-            parse_endpoints_without_private_config!(
-                config,
-                SendmailConfig,
-                SendmailEndpoint,
-                SENDMAIL_TYPENAME
-            )?
-            .into_iter()
-            .map(|e| (e.name().into(), e)),
-        );
+        for endpoint_config in convert_to_typed_array!(config.config, ConfigEntity::Sendmail) {
+            endpoints.insert(
+                endpoint_config.name.clone(),
+                Box::new(SendmailEndpoint {
+                    config: endpoint_config.clone(),
+                }) as Box<dyn Endpoint>,
+            );
+        }
 
-        endpoints.extend(
-            parse_endpoints_with_private_config!(
-                config,
-                GotifyConfig,
-                GotifyPrivateConfig,
-                GotifyEndpoint,
-                GOTIFY_TYPENAME
-            )?
-            .into_iter()
-            .map(|e| (e.name().into(), e)),
-        );
+        for endpoint_config in convert_to_typed_array!(config.config, ConfigEntity::Gotify) {
+            if let Some(private_config) = lookup!(
+                config.private_config,
+                &endpoint_config.name,
+                PrivateConfigEntity::Gotify
+            ) {
+                endpoints.insert(
+                    endpoint_config.name.clone(),
+                    Box::new(GotifyEndpoint {
+                        config: endpoint_config.clone(),
+                        private_config: private_config.clone(),
+                    }) as Box<dyn Endpoint>,
+                );
+            } else {
+                log_missing_private_config(&endpoint_config.name);
+            }
+        }
 
-        endpoints.extend(
-            parse_endpoints_with_private_config!(
-                config,
-                SmtpConfig,
-                SmtpPrivateConfig,
-                SmtpEndpoint,
-                SMTP_TYPENAME
-            )?
-            .into_iter()
-            .map(|e| (e.name().into(), e)),
-        );
+        for endpoint_config in convert_to_typed_array!(config.config, ConfigEntity::Webhook) {
+            if let Some(private_config) = lookup!(
+                config.private_config,
+                &endpoint_config.name,
+                PrivateConfigEntity::Webhook
+            ) {
+                endpoints.insert(
+                    endpoint_config.name.clone(),
+                    Box::new(WebhookEndpoint {
+                        config: endpoint_config.clone(),
+                        private_config: private_config.clone(),
+                    }) as Box<dyn Endpoint>,
+                );
+            } else {
+                log_missing_private_config(&endpoint_config.name);
+            }
+        }
 
-        endpoints.extend(
-            parse_endpoints_with_private_config!(
-                config,
-                WebhookConfig,
-                WebhookPrivateConfig,
-                WebhookEndpoint,
-                WEBHOOK_TYPENAME
-            )?
-            .into_iter()
-            .map(|e| (e.name().into(), e)),
-        );
+        for endpoint_config in convert_to_typed_array!(config.config, ConfigEntity::Smtp) {
+            if let Some(private_config) = lookup!(
+                config.private_config,
+                &endpoint_config.name,
+                PrivateConfigEntity::Smtp
+            ) {
+                endpoints.insert(
+                    endpoint_config.name.clone(),
+                    Box::new(SmtpEndpoint {
+                        config: endpoint_config.clone(),
+                        private_config: private_config.clone(),
+                    }) as Box<dyn Endpoint>,
+                );
+            } else {
+                log_missing_private_config(&endpoint_config.name);
+            }
+        }
 
-        let matchers = config
-            .config
-            .convert_to_typed_array(MATCHER_TYPENAME)
-            .map_err(|err| Error::ConfigDeserialization(err.into()))?;
+        let matchers = convert_to_typed_array!(config.config, ConfigEntity::Matcher)
+            .into_iter()
+            .cloned()
+            .collect();
 
         Ok(Bus {
             endpoints,

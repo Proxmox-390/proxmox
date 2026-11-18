@@ -1,11 +1,11 @@
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::{http_bail, http_err};
-use crate::api_types::{
-    DeleteableSendmailProperty, SENDMAIL_TYPENAME, SendmailConfig, SendmailConfigUpdater,
-};
+use crate::api_types::{DeleteableSendmailProperty, SendmailConfig, SendmailConfigUpdater};
+use crate::config::ConfigEntity;
 
 /// Get a list of all sendmail endpoints.
 ///
@@ -13,10 +13,12 @@ use crate::api_types::{
 /// Returns a list of all sendmail endpoints or a `HttpError` if the config is
 /// erroneous (`500 Internal server error`).
 pub fn get_endpoints(config: &Config) -> Result<Vec<SendmailConfig>, HttpError> {
-    config
-        .config
-        .convert_to_typed_array(SENDMAIL_TYPENAME)
-        .map_err(|e| http_err!(NOT_FOUND, "Could not fetch endpoints: {e}"))
+    Ok(
+        convert_to_typed_array!(config.config, ConfigEntity::Sendmail)
+            .into_iter()
+            .cloned()
+            .collect(),
+    )
 }
 
 /// Get sendmail endpoint with given `name`.
@@ -24,10 +26,9 @@ pub fn get_endpoints(config: &Config) -> Result<Vec<SendmailConfig>, HttpError> 
 /// The caller is responsible for any needed permission checks.
 /// Returns the endpoint or a `HttpError` if the endpoint was not found (`404 Not found`).
 pub fn get_endpoint(config: &Config, name: &str) -> Result<SendmailConfig, HttpError> {
-    config
-        .config
-        .lookup(SENDMAIL_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
+    lookup!(config.config, name, ConfigEntity::Sendmail)
+        .cloned()
+        .ok_or_else(|| http_err!(NOT_FOUND, "endpoint '{name}' not found"))
 }
 
 /// Add a new sendmail endpoint.
@@ -50,14 +51,9 @@ pub fn add_endpoint(config: &mut Config, endpoint: SendmailConfig) -> Result<(),
 
     config
         .config
-        .set_data(&endpoint.name, SENDMAIL_TYPENAME, &endpoint)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint.name
-            )
-        })
+        .insert(endpoint.name.clone(), ConfigEntity::Sendmail(endpoint));
+
+    Ok(())
 }
 
 /// Update existing sendmail endpoint
@@ -122,16 +118,9 @@ pub fn update_endpoint(
         );
     }
 
-    config
-        .config
-        .set_data(name, SENDMAIL_TYPENAME, &endpoint)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint.name
-            )
-        })
+    config.config.insert(name, ConfigEntity::Sendmail(endpoint));
+
+    Ok(())
 }
 
 /// Delete existing sendmail endpoint
@@ -147,7 +136,7 @@ pub fn delete_endpoint(config: &mut Config, name: &str) -> Result<(), HttpError>
     let _ = get_endpoint(config, name)?;
     super::ensure_safe_to_delete(config, name)?;
 
-    config.config.sections.remove(name);
+    config.config.remove(name);
 
     Ok(())
 }

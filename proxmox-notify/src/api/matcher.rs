@@ -1,11 +1,11 @@
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::Config;
 use crate::api::http_err;
-use crate::api_types::{
-    DeleteableMatcherProperty, MATCHER_TYPENAME, MatcherConfig, MatcherConfigUpdater,
-};
+use crate::api_types::{DeleteableMatcherProperty, MatcherConfig, MatcherConfigUpdater};
+use crate::config::ConfigEntity;
 
 /// Get a list of all matchers
 ///
@@ -13,10 +13,12 @@ use crate::api_types::{
 /// Returns a list of all matchers or a `HttpError` if the config is
 /// (`500 Internal server error`).
 pub fn get_matchers(config: &Config) -> Result<Vec<MatcherConfig>, HttpError> {
-    config
-        .config
-        .convert_to_typed_array(MATCHER_TYPENAME)
-        .map_err(|e| http_err!(INTERNAL_SERVER_ERROR, "Could not fetch matchers: {e}"))
+    Ok(
+        convert_to_typed_array!(config.config, ConfigEntity::Matcher)
+            .into_iter()
+            .cloned()
+            .collect(),
+    )
 }
 
 /// Get matcher with given `name`
@@ -24,10 +26,9 @@ pub fn get_matchers(config: &Config) -> Result<Vec<MatcherConfig>, HttpError> {
 /// The caller is responsible for any needed permission checks.
 /// Returns the endpoint or a `HttpError` if the matcher was not found (`404 Not found`).
 pub fn get_matcher(config: &Config, name: &str) -> Result<MatcherConfig, HttpError> {
-    config
-        .config
-        .lookup(MATCHER_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "matcher '{name}' not found"))
+    lookup!(config.config, name, ConfigEntity::Matcher)
+        .cloned()
+        .ok_or_else(|| http_err!(NOT_FOUND, "matcher '{name}' not found"))
 }
 
 /// Get matcher with given `name`, translating any existing 'match-*' keys into an
@@ -37,10 +38,7 @@ pub fn get_matcher(config: &Config, name: &str) -> Result<MatcherConfig, HttpErr
 /// Returns the endpoint or a `HttpError` if the matcher was not found (`404 Not found`).
 #[cfg(feature = "legacy-matchers")]
 pub fn get_matcher_as_expression(config: &Config, name: &str) -> Result<MatcherConfig, HttpError> {
-    let mut matcher: MatcherConfig = config
-        .config
-        .lookup(MATCHER_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "matcher '{name}' not found"))?;
+    let mut matcher = get_matcher(config, name)?;
 
     if matcher.expression.is_none() {
         let expression = matcher.generate_expression_from_legacy_config();
@@ -80,16 +78,10 @@ pub fn add_matcher(
         .ensure_valid()
         .map_err(|err| http_err!(BAD_REQUEST, "invalid matcher config: {err}"))?;
 
-    config
-        .config
-        .set_data(&matcher_config.name, MATCHER_TYPENAME, &matcher_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save matcher '{}': {e}",
-                matcher_config.name
-            )
-        })?;
+    config.config.insert(
+        matcher_config.name.clone(),
+        ConfigEntity::Matcher(matcher_config),
+    );
 
     Ok(())
 }
@@ -176,15 +168,7 @@ pub fn update_matcher(
         .ensure_valid()
         .map_err(|err| http_err!(BAD_REQUEST, "invalid matcher config: {err}"))?;
 
-    config
-        .config
-        .set_data(name, MATCHER_TYPENAME, &matcher)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save matcher '{name}': {e}"
-            )
-        })?;
+    config.config.insert(name, ConfigEntity::Matcher(matcher));
 
     Ok(())
 }
@@ -199,7 +183,7 @@ pub fn delete_matcher(config: &mut Config, name: &str) -> Result<(), HttpError> 
     // Check if the matcher exists
     let _ = get_matcher(config, name)?;
 
-    config.config.sections.remove(name);
+    config.config.remove(name);
 
     Ok(())
 }

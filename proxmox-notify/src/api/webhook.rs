@@ -5,16 +5,15 @@
 use proxmox_config_digest::ConfigDigest;
 use proxmox_http_error::HttpError;
 use proxmox_schema::property_string::PropertyString;
+use proxmox_section_config::typed::{convert_to_typed_array, lookup};
 
 use crate::api::http_err;
 use crate::api_types::{
-    DeleteableWebhookProperty, KeyAndBase64Val, WEBHOOK_TYPENAME, WebhookConfig,
-    WebhookConfigUpdater, WebhookPrivateConfig,
+    DeleteableWebhookProperty, KeyAndBase64Val, WebhookConfig, WebhookConfigUpdater,
+    WebhookPrivateConfig,
 };
+use crate::config::{ConfigEntity, PrivateConfigEntity};
 use crate::{Config, http_bail};
-
-use super::remove_private_config_entry;
-use super::set_private_config_entry;
 
 /// Get a list of all webhook endpoints.
 ///
@@ -22,20 +21,22 @@ use super::set_private_config_entry;
 /// Returns a list of all webhook endpoints or a [`HttpError`] if the config is
 /// erroneous (`500 Internal server error`).
 pub fn get_endpoints(config: &Config) -> Result<Vec<WebhookConfig>, HttpError> {
-    let mut endpoints: Vec<WebhookConfig> = config
-        .config
-        .convert_to_typed_array(WEBHOOK_TYPENAME)
-        .map_err(|e| http_err!(NOT_FOUND, "Could not fetch endpoints: {e}"))?;
+    let mut endpoints: Vec<WebhookConfig> =
+        convert_to_typed_array!(config.config, ConfigEntity::Webhook)
+            .into_iter()
+            .cloned()
+            .collect();
 
     for endpoint in &mut endpoints {
-        let priv_config: WebhookPrivateConfig = config
-            .private_config
-            .lookup(WEBHOOK_TYPENAME, &endpoint.name)
-            .unwrap_or_default();
+        let priv_config = lookup!(
+            config.private_config,
+            &endpoint.name,
+            PrivateConfigEntity::Webhook
+        );
 
         let mut secret_names = Vec::new();
         // We only return *which* secrets we have stored, but not their values.
-        for secret in priv_config.secret {
+        for secret in priv_config.into_iter().flat_map(|c| &c.secret) {
             secret_names.push(
                 KeyAndBase64Val {
                     name: secret.name.clone(),
@@ -56,15 +57,15 @@ pub fn get_endpoints(config: &Config) -> Result<Vec<WebhookConfig>, HttpError> {
 /// The caller is responsible for any needed permission checks.
 /// Returns the endpoint or a [`HttpError`] if the endpoint was not found (`404 Not found`).
 pub fn get_endpoint(config: &Config, name: &str) -> Result<WebhookConfig, HttpError> {
-    let mut endpoint: WebhookConfig = config
-        .config
-        .lookup(WEBHOOK_TYPENAME, name)
-        .map_err(|_| http_err!(NOT_FOUND, "endpoint '{name}' not found"))?;
+    let mut endpoint = lookup!(config.config, name, ConfigEntity::Webhook)
+        .cloned()
+        .ok_or_else(|| http_err!(NOT_FOUND, "endpoint '{name}' not found"))?;
 
-    let priv_config: Option<WebhookPrivateConfig> = config
-        .private_config
-        .lookup(WEBHOOK_TYPENAME, &endpoint.name)
-        .ok();
+    let priv_config = lookup!(
+        config.private_config,
+        &endpoint.name,
+        PrivateConfigEntity::Webhook
+    );
 
     let mut secret_names = Vec::new();
     if let Some(priv_config) = priv_config {
@@ -100,26 +101,20 @@ pub fn add_endpoint(
 
     let secrets = std::mem::take(&mut endpoint_config.secret);
 
-    set_private_config_entry(
-        config,
-        &WebhookPrivateConfig {
+    config.private_config.insert(
+        endpoint_config.name.clone(),
+        PrivateConfigEntity::Webhook(WebhookPrivateConfig {
             name: endpoint_config.name.clone(),
             secret: secrets,
-        },
-        WEBHOOK_TYPENAME,
-        &endpoint_config.name,
-    )?;
+        }),
+    );
 
-    config
-        .config
-        .set_data(&endpoint_config.name, WEBHOOK_TYPENAME, &endpoint_config)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{}': {e}",
-                endpoint_config.name
-            )
-        })
+    config.config.insert(
+        endpoint_config.name.clone(),
+        ConfigEntity::Webhook(endpoint_config),
+    );
+
+    Ok(())
 }
 
 /// Update existing webhook endpoint.
@@ -144,11 +139,10 @@ pub fn update_endpoint(
     let mut endpoint = get_endpoint(config, name)?;
     endpoint.secret.clear();
 
-    let old_secrets = config
-        .private_config
-        .lookup::<WebhookPrivateConfig>(WEBHOOK_TYPENAME, name)
-        .map_err(|err| http_err!(INTERNAL_SERVER_ERROR, "could not read secret config: {err}"))?
-        .secret;
+    let old_secrets = lookup!(config.private_config, name, PrivateConfigEntity::Webhook)
+        .ok_or_else(|| http_err!(INTERNAL_SERVER_ERROR, "could not read secret config"))?
+        .secret
+        .clone();
 
     if let Some(delete) = delete {
         for deleteable_property in delete {
@@ -158,15 +152,13 @@ pub fn update_endpoint(
                 DeleteableWebhookProperty::Header => endpoint.header = Vec::new(),
                 DeleteableWebhookProperty::Body => endpoint.body = None,
                 DeleteableWebhookProperty::Secret => {
-                    set_private_config_entry(
-                        config,
-                        &WebhookPrivateConfig {
+                    config.private_config.insert(
+                        name,
+                        PrivateConfigEntity::Webhook(WebhookPrivateConfig {
                             name: name.into(),
                             secret: Vec::new(),
-                        },
-                        WEBHOOK_TYPENAME,
-                        name,
-                    )?;
+                        }),
+                    );
                 }
             }
         }
@@ -250,26 +242,18 @@ pub fn update_endpoint(
             new_secrets.push(sec);
         }
 
-        set_private_config_entry(
-            config,
-            &WebhookPrivateConfig {
+        config.private_config.insert(
+            name,
+            PrivateConfigEntity::Webhook(WebhookPrivateConfig {
                 name: name.into(),
                 secret: new_secrets,
-            },
-            WEBHOOK_TYPENAME,
-            name,
-        )?;
+            }),
+        );
     }
 
-    config
-        .config
-        .set_data(name, WEBHOOK_TYPENAME, &endpoint)
-        .map_err(|e| {
-            http_err!(
-                INTERNAL_SERVER_ERROR,
-                "could not save endpoint '{name}': {e}"
-            )
-        })
+    config.config.insert(name, ConfigEntity::Webhook(endpoint));
+
+    Ok(())
 }
 
 /// Delete existing webhook endpoint.
@@ -284,8 +268,9 @@ pub fn delete_endpoint(config: &mut Config, name: &str) -> Result<(), HttpError>
     let _ = get_endpoint(config, name)?;
     super::ensure_safe_to_delete(config, name)?;
 
-    remove_private_config_entry(config, name)?;
-    config.config.sections.remove(name);
+    config.private_config.remove(name);
+
+    config.config.remove(name);
 
     Ok(())
 }
@@ -381,11 +366,13 @@ mod tests {
         assert_eq!(endpoint.comment, Some("newcomment".to_string()));
         assert!(matches!(endpoint.method, HttpMethod::Put));
 
-        let secrets = config
-            .private_config
-            .lookup::<WebhookPrivateConfig>(WEBHOOK_TYPENAME, "webhook-endpoint")
-            .unwrap()
-            .secret;
+        let secrets = &lookup!(
+            config.private_config,
+            "webhook-endpoint",
+            PrivateConfigEntity::Webhook
+        )
+        .unwrap()
+        .secret;
 
         assert_eq!(secrets[1].name, "token".to_string());
         assert_eq!(secrets[1].value, Some(proxmox_base64::encode("secret")));
@@ -407,11 +394,13 @@ mod tests {
         let endpoint = get_endpoint(&config, "webhook-endpoint")?;
         assert_eq!(endpoint.comment, None);
 
-        let secrets = config
-            .private_config
-            .lookup::<WebhookPrivateConfig>(WEBHOOK_TYPENAME, "webhook-endpoint")
-            .unwrap()
-            .secret;
+        let secrets = &lookup!(
+            config.private_config,
+            "webhook-endpoint",
+            PrivateConfigEntity::Webhook
+        )
+        .unwrap()
+        .secret;
 
         assert!(secrets.is_empty());
 

@@ -40,6 +40,9 @@ proxmox-sys = { workspace = true, optional = true }
 proxmox-time.workspace = true
 proxmox-uuid = { workspace = true, features = ["serde"] }
 
+[dev-dependencies]
+pretty_assertions.workspace = true
+
 [features]
 default = ["send-impl", "api-types"]
 api-impl = [

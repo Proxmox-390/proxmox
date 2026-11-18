@@ -1,0 +1,29 @@
+sendmail: mail-to-root
+	comment Send mails to root@pam's email address
+	mailto-user root@pam
+
+matcher: default-matcher
+	comment Route all notifications to mail-to-root
+	expression {"constant":true}
+	target mail-to-root
+
+gotify: test-gotify
+	comment some comment
+	server https://localhost:8000
+
+smtp: test-smtp
+	author Proxmox VE (test)
+	comment some comment
+	from-address test@example.com
+	mailto test@example.com
+	mailto-user root@pam
+	mode tls
+	server mail.example.com
+	username testuser
+
+webhook: test-webhook
+	body c29tZXRoaW5n
+	comment some comment
+	header name=Content-Type,value=YXBwbGljYXRpb24vanNvbg==
+	method post
+	url https://localhost:8001
