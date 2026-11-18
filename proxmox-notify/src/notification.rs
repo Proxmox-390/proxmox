@@ -138,4 +138,19 @@ impl Notification {
     pub fn timestamp(&self) -> i64 {
         self.metadata.timestamp
     }
+
+    /// Return the notification's severity.
+    pub fn severity(&self) -> Severity {
+        self.metadata.severity
+    }
+
+    /// Get access to the notification's metadata fields.
+    pub fn fields(&self) -> &HashMap<String, String> {
+        &self.metadata.additional_fields
+    }
+
+    /// Get mutable access to the notification's metadata fields.
+    pub fn fields_mut(&mut self) -> &mut HashMap<String, String> {
+        &mut self.metadata.additional_fields
+    }
 }
