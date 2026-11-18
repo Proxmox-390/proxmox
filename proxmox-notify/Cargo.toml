@@ -44,7 +44,7 @@ proxmox-uuid = { workspace = true, features = ["serde"] }
 pretty_assertions.workspace = true
 
 [features]
-default = ["send-impl", "api-types"]
+default = []
 api-impl = [
     "api-types",
     "dep:proxmox-config-digest",

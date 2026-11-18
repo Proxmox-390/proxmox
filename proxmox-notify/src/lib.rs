@@ -4,23 +4,32 @@
 #[cfg(feature = "api-impl")]
 pub mod api;
 
-pub mod config;
-pub mod context;
-pub mod endpoints;
-pub mod renderer;
-
-#[cfg(feature = "send-impl")]
-pub mod send;
-
 #[cfg(feature = "api-types")]
 pub mod api_types;
 
+#[cfg(any(feature = "api-impl", feature = "send-impl"))]
+mod config;
+#[cfg(any(feature = "api-impl", feature = "send-impl"))]
+pub use config::{Config, ConfigEntity, PrivateConfigEntity};
+
+#[cfg(any(feature = "api-impl", feature = "send-impl"))]
+pub mod context;
+#[cfg(any(feature = "api-impl", feature = "send-impl"))]
+pub use context::{Context, ContextImpl};
+
+#[cfg(feature = "send-impl")]
+mod endpoints;
+
+#[cfg(feature = "send-impl")]
+mod renderer;
+
+#[cfg(feature = "send-impl")]
+mod send;
+#[cfg(feature = "send-impl")]
+pub use send::{send, test_target};
+
 mod error;
 pub use error::Error;
-
-pub use config::Config;
-pub use context::Context;
-pub use context::ContextImpl;
 
 mod notification;
 pub use notification::*;
