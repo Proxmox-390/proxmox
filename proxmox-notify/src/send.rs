@@ -5,14 +5,16 @@ use proxmox_uuid::Uuid;
 use serde_json::json;
 use tracing::{error, info};
 
-use crate::api_types::MatcherConfig;
+use crate::api_types::{MatcherConfig, SendmailConfig};
 use crate::config::{ConfigEntity, PrivateConfigEntity};
 use crate::endpoints::Endpoint;
 use crate::endpoints::gotify::GotifyEndpoint;
 use crate::endpoints::sendmail::SendmailEndpoint;
 use crate::endpoints::smtp::SmtpEndpoint;
 use crate::endpoints::webhook::WebhookEndpoint;
-use crate::{Config, Content, Context, Error, Metadata, Notification, Severity};
+use crate::{
+    Config, Content, Context, EmailRecipient, Error, Metadata, Notification, Recipient, Severity,
+};
 
 /// Send a notification to a given target.
 ///
@@ -143,30 +145,70 @@ impl Bus {
     ///
     /// Any errors will not be returned but only logged.
     pub fn send(&self, context: &Context, notification: &Notification) {
-        let targets = self.check_matches(notification);
-
-        for target in targets {
-            if let Some(endpoint) = self.endpoints.get(target) {
-                let name = endpoint.name();
-
-                if endpoint.disabled() {
-                    // Skip this target if it is disabled
-                    info!("skipping disabled target '{name}'");
-                    continue;
-                }
-
-                match endpoint.send(context, notification) {
-                    Ok(_) => {
-                        info!("notified via target `{name}`");
-                    }
-                    Err(e) => {
-                        // Only log on errors, do not propagate fail to the caller.
-                        error!("could not notify via target `{name}`: {e}");
-                    }
-                }
-            } else {
-                error!("could not notify via target '{target}', it does not exist");
+        match notification.recipient() {
+            Recipient::Email(params) => self.send_to_email(context, notification, params),
+            Recipient::Target(target) => {
+                self.send_to_target(context, notification, target);
             }
+            Recipient::Matcher => {
+                let targets = self.check_matches(notification);
+
+                for target in targets {
+                    self.send_to_target(context, notification, target);
+                }
+            }
+        }
+    }
+
+    fn send_to_email(
+        &self,
+        context: &Context,
+        notification: &Notification,
+        email_recipient: &EmailRecipient,
+    ) {
+        let recipient_list = email_recipient.mailto.join(", ");
+
+        let endpoint = SendmailEndpoint {
+            config: SendmailConfig {
+                name: "legacy-sendmail".into(),
+                mailto: email_recipient.mailto.clone(),
+                author: email_recipient.author.clone(),
+                ..Default::default()
+            },
+        };
+
+        match endpoint.send(context, notification) {
+            Ok(_) => {
+                info!("notified via `{recipient_list}`");
+            }
+            Err(e) => {
+                // Only log on errors, do not propagate fail to the caller.
+                error!("could not notify via `{recipient_list}`: {e}");
+            }
+        }
+    }
+
+    fn send_to_target(&self, context: &Context, notification: &Notification, target: &str) {
+        if let Some(endpoint) = self.endpoints.get(target) {
+            let name = endpoint.name();
+
+            if endpoint.disabled() {
+                // Skip this target if it is disabled
+                info!("skipping disabled target '{name}'");
+                return;
+            }
+
+            match endpoint.send(context, notification) {
+                Ok(_) => {
+                    info!("notified via target `{name}`");
+                }
+                Err(e) => {
+                    // Only log on errors, do not propagate fail to the caller.
+                    error!("could not notify via target `{name}`: {e}");
+                }
+            }
+        } else {
+            error!("could not notify via target '{target}', it does not exist");
         }
     }
 
@@ -187,6 +229,7 @@ impl Bus {
                 data: json!({ "target": target }),
             },
             id: Uuid::generate(),
+            recipient: Recipient::Target(target.into()),
         };
 
         if let Some(endpoint) = self.endpoints.get(target) {

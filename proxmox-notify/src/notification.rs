@@ -84,6 +84,36 @@ pub struct Metadata {
     pub(crate) additional_fields: HashMap<String, String>,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+/// Determine how the notification shall be sent.
+pub enum Recipient {
+    /// Use matchers to determine which targets shall be notified.
+    ///
+    /// This is the default mode of operation, use this unless you have a good
+    /// reason not to.
+    #[default]
+    Matcher,
+    /// Deliver notification directly to a target, identified by its ID.
+    ///
+    /// This is useful for test notifications.
+    Target(String),
+    /// Deliver notification to an ephemeral sendmail target with given list of recipients.
+    ///
+    /// This is mainly for handling the legacy-sendmail mode in PVE and PBS.
+    Email(EmailRecipient),
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+/// Parameters for [`Recipient::Email`]-based recipients.
+pub struct EmailRecipient {
+    /// List of email addresses to send mails to.
+    pub mailto: Vec<String>,
+    /// Email author
+    pub author: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 /// Notification which can be sent
@@ -94,6 +124,9 @@ pub struct Notification {
     pub(crate) metadata: Metadata,
     /// Unique ID
     pub(crate) id: Uuid,
+    #[serde(default)]
+    /// The recipient of the notification.
+    pub(crate) recipient: Recipient,
 }
 
 impl Notification {
@@ -114,6 +147,7 @@ impl Notification {
                 data: template_data,
             },
             id: Uuid::generate(),
+            recipient: Recipient::Matcher,
         }
     }
 
@@ -130,6 +164,7 @@ impl Notification {
                 timestamp: proxmox_time::epoch_i64(),
             },
             id: Uuid::generate(),
+            recipient: Recipient::Matcher,
         })
     }
 
@@ -156,6 +191,11 @@ impl Notification {
     /// Get mutable access to the notification's metadata fields.
     pub fn fields_mut(&mut self) -> &mut HashMap<String, String> {
         &mut self.metadata.additional_fields
+    }
+
+    /// Return the recipient of the notification.
+    pub fn recipient(&self) -> &Recipient {
+        &self.recipient
     }
 }
 
