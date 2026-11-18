@@ -448,6 +448,50 @@ mod tests {
     }
 
     #[test]
+    fn queue_file_format() {
+        let id = "8fd2ec4e-2e47-4e0b-9a23-b6b1d1a7f6e3";
+        let metadata = json!({
+            "severity": "info",
+            "timestamp": 1700000000,
+            "additional-fields": {"hostname": "node1", "type": "test"},
+        });
+        let template = json!({"template": {"template-name": "test", "data": {"key": "value"}}});
+
+        let serialized = [
+            json!({"content": template, "metadata": metadata, "id": id, "recipient": "matcher"}),
+            json!({
+                "content": template,
+                "metadata": metadata,
+                "id": id,
+                "recipient": {"target": "mail-to-root"},
+            }),
+            json!({
+                "content": template,
+                "metadata": metadata,
+                "id": id,
+                "recipient": {"email": {"mailto": ["root@example.com"], "author": "vzdump"}},
+            }),
+            json!({
+                "content": {"forwarded-mail": {"raw": "/wBtYWk="}},
+                "metadata": metadata,
+                "id": id,
+                "recipient": "matcher",
+            }),
+        ];
+
+        for value in serialized {
+            let notification: Notification = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&notification).unwrap(), value);
+        }
+
+        // Notifications queued before the recipient existed are routed through the matchers.
+        let notification: Notification =
+            serde_json::from_value(json!({"content": template, "metadata": metadata, "id": id}))
+                .unwrap();
+        assert_eq!(notification.recipient, Recipient::Matcher);
+    }
+
+    #[test]
     /// Verify that it is not possible to construct notifications
     /// with invalid template names.
     fn invalid_template_name() {

@@ -231,4 +231,64 @@ mod tests {
         assert_eq!(public_config, CONFIG_REF);
         assert_eq!(private_config, PRIV_CONFIG_REF);
     }
+
+    const BUILTIN_CONFIG: &str = "\
+sendmail: mail-to-root
+	mailto-user root@pam
+
+matcher: default-matcher
+	target mail-to-root
+";
+
+    fn origins(config: &Config) -> Vec<(String, Option<Origin>)> {
+        let mut origins: Vec<_> = config
+            .config
+            .iter()
+            .map(|(name, entity)| (name.to_string(), entity.origin()))
+            .collect();
+        origins.sort_by(|a, b| a.0.cmp(&b.0));
+        origins
+    }
+
+    #[test]
+    fn builtin_origin() {
+        let builtin = ConfigEntity::parse_section_config("builtin", BUILTIN_CONFIG).unwrap();
+
+        let modified_and_user_created = "\
+sendmail: mail-to-root
+	mailto-user root@pam
+
+matcher: default-matcher
+	comment changed by the user
+	target mail-to-root
+
+sendmail: user-target
+	mailto user@example.com
+";
+
+        let config =
+            Config::parse_section_config(modified_and_user_created, "", Some(&builtin)).unwrap();
+        assert_eq!(
+            origins(&config),
+            [
+                ("default-matcher".into(), Some(Origin::ModifiedBuiltin)),
+                ("mail-to-root".into(), Some(Origin::Builtin)),
+                ("user-target".into(), Some(Origin::UserCreated)),
+            ]
+        );
+
+        // Built-in entries are added if missing, and stay built-in when written back unchanged.
+        let config = Config::parse_section_config("", "", Some(&builtin)).unwrap();
+        let expected = [
+            ("default-matcher".into(), Some(Origin::Builtin)),
+            ("mail-to-root".into(), Some(Origin::Builtin)),
+        ];
+        assert_eq!(origins(&config), expected);
+
+        let (written, _) = config.to_section_config().unwrap();
+        assert!(!written.contains("origin"));
+
+        let config = Config::parse_section_config(&written, "", Some(&builtin)).unwrap();
+        assert_eq!(origins(&config), expected);
+    }
 }

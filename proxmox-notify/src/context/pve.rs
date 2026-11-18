@@ -132,6 +132,34 @@ pub static PVE_CONTEXT: PVEContext = PVEContext;
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_builtin_config() {
+        let builtin = PVEContext.default_config();
+        assert!(!builtin.is_empty());
+
+        // An unmodified built-in config written to disk must be recognized as such again.
+        let config = Config::parse_section_config("", "", Some(builtin)).unwrap();
+        let (written, _) = config.to_section_config().unwrap();
+
+        let without_builtins = Config::parse_section_config(&written, "", None).unwrap();
+        for (name, _) in builtin.iter() {
+            assert!(
+                without_builtins.config.get(name).is_some(),
+                "{name} not written"
+            );
+        }
+
+        let config = Config::parse_section_config(&written, "", Some(builtin)).unwrap();
+
+        for (name, entity) in config.config.iter() {
+            assert_eq!(
+                entity.origin(),
+                Some(crate::api_types::Origin::Builtin),
+                "{name}"
+            );
+        }
+    }
+
     const USER_CONFIG: &str = "
 user:root@pam:1:0:::root@example.com:::
 user:test@pve:1:0:::test@example.com:::

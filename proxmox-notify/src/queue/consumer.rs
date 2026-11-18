@@ -546,6 +546,27 @@ mod test {
     }
 
     #[test]
+    fn test_ignore_other_files() {
+        let base_dir = tempdir().unwrap();
+        let consumer = QueueConsumer::new(base_dir.path());
+
+        let id = Uuid::generate();
+        let names = [
+            // left over by an interrupted submission
+            format!("notification-{id}.tmp_AbC123"),
+            format!("notification-{id}.attempt-1.broken"),
+            format!("notification-{id}.attempt-x"),
+            format!("notification-{id}.json"),
+            format!("{id}.json"),
+        ];
+        for name in names {
+            std::fs::write(base_dir.path().join(name), b"{}").unwrap();
+        }
+
+        assert!(consumer.queued_notifications().unwrap().is_empty());
+    }
+
+    #[test]
     fn test_read_symlink() {
         let base_dir = tempdir().unwrap();
         let other_dir = tempdir().unwrap();

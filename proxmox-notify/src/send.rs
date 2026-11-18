@@ -362,6 +362,8 @@ mod tests {
     #[derive(Default, Clone)]
     struct MockEndpoint {
         name: &'static str,
+        fail: bool,
+        disabled: bool,
         // Needs to be an Rc so that we can clone MockEndpoint before
         // passing it to Bus, while still retaining a handle to the Vec
         messages: Rc<RefCell<Vec<Notification>>>,
@@ -369,6 +371,10 @@ mod tests {
 
     impl Endpoint for MockEndpoint {
         fn send(&self, _context: &Context, message: &Notification) -> Result<(), Error> {
+            if self.fail {
+                return Err(Error::other("mock failure"));
+            }
+
             self.messages.borrow_mut().push(message.clone());
 
             Ok(())
@@ -379,7 +385,7 @@ mod tests {
         }
 
         fn disabled(&self) -> bool {
-            false
+            self.disabled
         }
     }
 
@@ -428,6 +434,93 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         Ok(())
+    }
+
+    fn target_statuses(receipt: &Receipt) -> Vec<(String, TargetReceiptStatus)> {
+        let mut statuses: Vec<_> = receipt
+            .target_receipts()
+            .iter()
+            .map(|r| (r.target().unwrap().to_string(), r.status().clone()))
+            .collect();
+        statuses.sort_by(|a, b| a.0.cmp(&b.0));
+        statuses
+    }
+
+    #[test]
+    fn test_receipts() {
+        let context = test::test_context();
+
+        let mut bus = Bus::default();
+        bus.add_endpoint(Box::new(MockEndpoint::new("ok")));
+        bus.add_endpoint(Box::new(MockEndpoint {
+            fail: true,
+            ..MockEndpoint::new("failing")
+        }));
+        bus.add_endpoint(Box::new(MockEndpoint {
+            disabled: true,
+            ..MockEndpoint::new("disabled")
+        }));
+
+        bus.add_matcher(MatcherConfig {
+            name: "all".into(),
+            expression: Some(expression_to_string(Expression::Constant(true))),
+            target: vec![
+                "ok".into(),
+                "failing".into(),
+                "disabled".into(),
+                "missing".into(),
+            ],
+            ..Default::default()
+        });
+        bus.add_matcher(MatcherConfig {
+            name: "none".into(),
+            expression: Some(expression_to_string(Expression::Constant(false))),
+            target: vec!["ok".into()],
+            ..Default::default()
+        });
+
+        let notification = |recipient| {
+            Notification::template_builder("test", None::<()>)
+                .recipient(recipient)
+                .build()
+                .unwrap()
+        };
+        let error = |message: &str| TargetReceiptStatus::Error {
+            error_message: message.into(),
+        };
+
+        let receipt = bus.send(&context, &notification(Recipient::Matcher));
+
+        let matchers: Vec<_> = receipt.matcher_receipts().iter().collect();
+        assert_eq!(matchers.len(), 2);
+        assert_eq!(matchers[0].matcher(), "all");
+        assert!(matches!(
+            matchers[0].status(),
+            MatcherReceiptStatus::Matched { targets, .. } if targets.len() == 4
+        ));
+        assert_eq!(matchers[1].matcher(), "none");
+        assert!(matches!(
+            matchers[1].status(),
+            MatcherReceiptStatus::NoMatch { .. }
+        ));
+
+        assert_eq!(
+            target_statuses(&receipt),
+            [
+                ("disabled".into(), TargetReceiptStatus::Disabled),
+                ("failing".into(), error("mock failure")),
+                ("missing".into(), error("target 'missing' does not exist")),
+                ("ok".into(), TargetReceiptStatus::Delivered),
+            ]
+        );
+
+        // Sending to a target directly skips the matchers.
+        let receipt = bus.send(&context, &notification(Recipient::Target("failing".into())));
+        assert!(receipt.matcher_receipts().is_empty());
+        assert_eq!(
+            target_statuses(&receipt),
+            [("failing".into(), error("mock failure"))]
+        );
     }
 
     #[test]
