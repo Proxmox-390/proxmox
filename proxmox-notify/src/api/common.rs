@@ -1,51 +1,6 @@
 use proxmox_http_error::HttpError;
 
-use super::http_err;
-use crate::{Bus, Config, Context, Error, Notification};
-
-/// Send a notification to a given target.
-///
-/// The caller is responsible for any needed permission checks.
-/// Returns an `anyhow::Error` in case of an error.
-pub fn send(
-    context: &Context,
-    config: &Config,
-    notification: &Notification,
-) -> Result<(), HttpError> {
-    let bus = Bus::from_config(config).map_err(|err| {
-        http_err!(
-            INTERNAL_SERVER_ERROR,
-            "Could not instantiate notification bus: {err}"
-        )
-    })?;
-
-    bus.send(context, notification);
-
-    Ok(())
-}
-
-/// Test target (group or single endpoint) identified by its `name`.
-///
-/// The caller is responsible for any needed permission checks.
-/// Returns an `anyhow::Error` if sending via the endpoint failed.
-pub fn test_target(context: &Context, config: &Config, endpoint: &str) -> Result<(), HttpError> {
-    let bus = Bus::from_config(config).map_err(|err| {
-        http_err!(
-            INTERNAL_SERVER_ERROR,
-            "Could not instantiate notification bus: {err}"
-        )
-    })?;
-
-    bus.test_target(context, endpoint)
-        .map_err(|err| match err {
-            Error::TargetDoesNotExist(endpoint) => {
-                http_err!(NOT_FOUND, "endpoint '{endpoint}' does not exist")
-            }
-            _ => http_err!(INTERNAL_SERVER_ERROR, "Could not test target: {err}"),
-        })?;
-
-    Ok(())
-}
+use crate::Config;
 
 /// Return all entities (targets, groups, filters) that are linked to the entity.
 /// For instance, if a group 'grp1' contains the targets 'a', 'b' and 'c',
