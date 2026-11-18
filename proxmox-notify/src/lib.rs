@@ -1,4 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![deny(unsafe_code)]
 
 use std::collections::HashMap;
 use std::error::Error as StdError;
