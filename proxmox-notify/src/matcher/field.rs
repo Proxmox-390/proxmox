@@ -88,29 +88,13 @@ pub mod inline {
 
     use const_format::concatcp;
 
-    use proxmox_schema::{
-        ApiStringFormat, Schema, StringSchema, api_types::SAFE_ID_REGEX_STR, const_regex,
-    };
+    use proxmox_schema::{api_types::SAFE_ID_REGEX_STR, const_regex};
 
     use super::*;
 
     const_regex! {
         pub MATCH_FIELD_ENTRY_REGEX = concatcp!(r"^(?:(exact|regex):)?(", SAFE_ID_REGEX_STR, r")=(.*)$");
     }
-
-    pub const MATCH_FIELD_ENTRY_FORMAT: ApiStringFormat =
-        ApiStringFormat::VerifyFn(verify_inline_field_matcher);
-
-    fn verify_inline_field_matcher(s: &str) -> Result<(), anyhow::Error> {
-        let _: InlineFieldMatcher = s.parse()?;
-        Ok(())
-    }
-
-    pub const MATCH_FIELD_ENTRY_SCHEMA: Schema = StringSchema::new("Match metadata field.")
-        .format(&MATCH_FIELD_ENTRY_FORMAT)
-        .min_length(1)
-        .max_length(1024)
-        .schema();
 
     /// Check if the notification metadata fields match
     /// This is a wrapper that serializes into an inline format that can be used
