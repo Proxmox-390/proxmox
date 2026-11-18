@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
 
+use crate::Config;
 use crate::config::ConfigEntity;
 use crate::context::{ContextImpl, TemplateSource, common};
 use crate::error::BoxedError;
@@ -86,6 +87,22 @@ impl ContextImpl for PVEContext {
         let template_string = proxmox_sys::fs::file_read_optional_string(path)?;
 
         Ok(template_string)
+    }
+
+    fn read_config(&self) -> Result<Config, BoxedError> {
+        let raw_config = proxmox_sys::fs::file_read_optional_string("/etc/pve/notifications.cfg")?
+            .unwrap_or_default();
+        let raw_private_config =
+            proxmox_sys::fs::file_read_optional_string("/etc/pve/priv/notifications.cfg")?
+                .unwrap_or_default();
+
+        let config = Config::parse_section_config(
+            &raw_config,
+            &raw_private_config,
+            Some(self.default_config()),
+        )?;
+
+        Ok(config)
     }
 }
 

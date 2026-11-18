@@ -5,6 +5,7 @@ use std::sync::Arc;
 use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::SectionConfigData;
 
+use crate::Config;
 use crate::config::ConfigEntity;
 use crate::error::BoxedError;
 
@@ -63,6 +64,9 @@ pub trait ContextImpl: Send + Sync + Debug {
         namespace: Option<&str>,
         source: TemplateSource,
     ) -> Result<Option<String>, BoxedError>;
+
+    /// Read notification config.
+    fn read_config(&self) -> Result<Config, BoxedError>;
 }
 
 /// Choose between the provided `vendor` template or its by the user optionally created `override`

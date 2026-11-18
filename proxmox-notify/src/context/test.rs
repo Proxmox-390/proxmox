@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use proxmox_http::ProxyConfig;
 use proxmox_section_config::typed::SectionConfigData;
 
+use crate::Config;
 use crate::Context;
 use crate::config::ConfigEntity;
 use crate::context::ContextImpl;
@@ -10,8 +11,11 @@ use crate::error::BoxedError;
 
 use super::TemplateSource;
 
-#[derive(Debug)]
-pub(crate) struct TestContext;
+#[derive(Debug, Default)]
+pub(crate) struct TestContext {
+    /// Make [`ContextImpl::read_config`] fail, to test how callers handle an unreadable config.
+    pub(crate) fail_read_config: bool,
+}
 
 impl ContextImpl for TestContext {
     fn lookup_email_for_user(&self, user: &str) -> Option<String> {
@@ -49,8 +53,19 @@ impl ContextImpl for TestContext {
     ) -> Result<Option<String>, BoxedError> {
         Ok(Some(String::new()))
     }
+
+    fn read_config(&self) -> Result<Config, BoxedError> {
+        if self.fail_read_config {
+            return Err(Box::new(crate::Error::other(
+                "injected config read failure",
+            )));
+        }
+
+        // An empty config has no targets and no matchers.
+        Ok(Config::parse_section_config("", "", None)?)
+    }
 }
 
 pub(crate) fn test_context() -> Context {
-    Context::new(TestContext)
+    Context::new(TestContext::default())
 }
