@@ -121,31 +121,29 @@ impl Notification {
         }
     }
     #[cfg(feature = "mail-forwarder")]
-    pub fn new_forwarded_mail(raw_mail: &[u8], uid: Option<u32>) -> Result<Self, Error> {
+    pub fn new_forwarded_mail(
+        severity: Severity,
+        raw_mail: Vec<u8>,
+        fields: HashMap<String, String>,
+        uid: Option<u32>,
+    ) -> Result<Self, Error> {
         let message = mail_parser::MessageParser::default()
-            .parse(raw_mail)
+            .parse(&raw_mail)
             .ok_or_else(|| Error::invalid_forwarded_message("could not parse forwarded email"))?;
 
         let title = message.subject().unwrap_or_default().into();
         let body = message.body_text(0).unwrap_or_default().into();
 
-        let mut additional_fields = HashMap::new();
-        additional_fields.insert("hostname".into(), proxmox_sys::nodename().into());
-        additional_fields.insert("type".into(), "system-mail".into());
-
         Ok(Self {
-            // Unfortunately we cannot reasonably infer the severity from the
-            // mail contents, so just set it to the highest for now so that
-            // it is not filtered out.
             content: Content::ForwardedMail {
-                raw: raw_mail.into(),
+                raw: raw_mail,
                 title,
                 body,
                 uid,
             },
             metadata: Metadata {
-                severity: Severity::Unknown,
-                additional_fields,
+                severity,
+                additional_fields: fields,
                 timestamp: proxmox_time::epoch_i64(),
             },
             id: Uuid::generate(),
