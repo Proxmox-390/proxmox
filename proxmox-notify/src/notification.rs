@@ -62,15 +62,10 @@ pub enum Content {
         /// Data that can be used for template rendering.
         data: Value,
     },
-    #[cfg(feature = "mail-forwarder")]
     #[serde(rename_all = "kebab-case")]
     ForwardedMail {
         /// Raw mail contents
         raw: Vec<u8>,
-        /// Fallback title
-        title: String,
-        /// Fallback body
-        body: String,
         /// UID to use when calling sendmail
         #[allow(dead_code)] // Unused in some feature flag permutations
         uid: Option<u32>,
@@ -120,27 +115,15 @@ impl Notification {
             id: Uuid::generate(),
         }
     }
-    #[cfg(feature = "mail-forwarder")]
+
     pub fn new_forwarded_mail(
         severity: Severity,
         raw_mail: Vec<u8>,
         fields: HashMap<String, String>,
         uid: Option<u32>,
     ) -> Result<Self, Error> {
-        let message = mail_parser::MessageParser::default()
-            .parse(&raw_mail)
-            .ok_or_else(|| Error::invalid_forwarded_message("could not parse forwarded email"))?;
-
-        let title = message.subject().unwrap_or_default().into();
-        let body = message.body_text(0).unwrap_or_default().into();
-
         Ok(Self {
-            content: Content::ForwardedMail {
-                raw: raw_mail,
-                title,
-                body,
-                uid,
-            },
+            content: Content::ForwardedMail { raw: raw_mail, uid },
             metadata: Metadata {
                 severity,
                 additional_fields: fields,

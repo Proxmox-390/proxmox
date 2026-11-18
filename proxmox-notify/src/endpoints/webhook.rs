@@ -21,6 +21,7 @@ use proxmox_http::client::sync::Client;
 use proxmox_http::{HttpClient, HttpOptions};
 
 use crate::api_types::{HttpMethod, WebhookConfig, WebhookPrivateConfig};
+use crate::endpoints::common::mail;
 use crate::renderer::TemplateType;
 use crate::{Content, Context, Error, Notification, renderer};
 
@@ -93,8 +94,8 @@ impl WebhookEndpoint {
 
                 (rendered_title, rendered_message)
             }
-            #[cfg(feature = "mail-forwarder")]
-            Content::ForwardedMail { title, body, .. } => (title.clone(), body.clone()),
+
+            Content::ForwardedMail { raw, .. } => mail::parse_subject_and_plaintext_body(raw)?,
         };
 
         let mut fields = Map::new();

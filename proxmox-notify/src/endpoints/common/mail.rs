@@ -1,4 +1,5 @@
 use crate::Context;
+use crate::Error;
 
 /// Get list of email recipients from a list of email addresses and users.
 ///
@@ -32,6 +33,18 @@ pub(crate) fn get_recipients(
         }
     }
     recipients
+}
+
+/// Parse raw email message and return subject and plaintext body
+pub(crate) fn parse_subject_and_plaintext_body(raw_mail: &[u8]) -> Result<(String, String), Error> {
+    let message = mail_parser::MessageParser::default()
+        .parse(raw_mail)
+        .ok_or_else(|| Error::invalid_forwarded_message("could not parse forwarded email"))?;
+
+    let title = message.subject().unwrap_or_default().into();
+    let body = message.body_text(0).unwrap_or_default().into();
+
+    Ok((title, body))
 }
 
 #[cfg(test)]

@@ -63,7 +63,6 @@ impl Endpoint for SendmailEndpoint {
                     Error::other_with_source("could not send mail via sendmail", err)
                 })
             }
-            #[cfg(feature = "mail-forwarder")]
             Content::ForwardedMail { raw, uid, .. } => {
                 Mail::forward(&recipients_str, &mailfrom, raw, *uid).map_err(|err| {
                     Error::other_with_source("could not forward mail via sendmail", err)

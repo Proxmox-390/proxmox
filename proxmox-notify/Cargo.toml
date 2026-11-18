@@ -66,6 +66,7 @@ send-impl = [
     "dep:lettre",
     "dep:handlebars",
     "dep:proxmox-config-digest",
+    "dep:mail-parser",
     "dep:percent-encoding",
     "dep:proxmox-base64",
     "dep:proxmox-http",
@@ -73,9 +74,9 @@ send-impl = [
     "dep:proxmox-human-byte",
     "dep:proxmox-section-config",
     "dep:proxmox-sendmail",
+    "proxmox-sendmail/mail-forwarder",
     "dep:proxmox-sys",
 ]
-mail-forwarder = ["dep:mail-parser", "dep:proxmox-sys", "proxmox-sendmail/mail-forwarder"]
 pve-context = ["dep:proxmox-sys", "legacy-matchers"]
 pbs-context = ["dep:proxmox-sys", "legacy-matchers"]
 legacy-matchers = []

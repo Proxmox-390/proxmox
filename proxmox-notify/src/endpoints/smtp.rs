@@ -132,7 +132,6 @@ impl Endpoint for SmtpEndpoint {
                         Error::invalid_config_with_source("could not build email message", err)
                     })?
             }
-            #[cfg(feature = "mail-forwarder")]
             Content::ForwardedMail { raw, .. } => build_forwarded_message(email_builder, raw)?,
         };
 
@@ -161,7 +160,6 @@ impl Endpoint for SmtpEndpoint {
 }
 
 /// Construct a lettre `Message` from a raw email message.
-#[cfg(feature = "mail-forwarder")]
 fn build_forwarded_message(
     email_builder: lettre::message::MessageBuilder,
     raw: &[u8],
@@ -312,7 +310,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "mail-forwarder")]
     #[test]
     fn test_forward_message_from_raw() {
         use lettre::message::header::Date;

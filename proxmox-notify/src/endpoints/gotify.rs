@@ -7,6 +7,7 @@ use proxmox_http::client::sync::Client;
 use proxmox_http::{HttpClient, HttpOptions};
 
 use crate::api_types::{GotifyConfig, GotifyPrivateConfig};
+use crate::endpoints::common::mail;
 use crate::renderer::TemplateType;
 use crate::{Content, Context, Error, Notification, Severity, renderer};
 
@@ -48,8 +49,8 @@ impl Endpoint for GotifyEndpoint {
 
                 (rendered_title, rendered_message)
             }
-            #[cfg(feature = "mail-forwarder")]
-            Content::ForwardedMail { title, body, .. } => (title.clone(), body.clone()),
+
+            Content::ForwardedMail { raw, .. } => mail::parse_subject_and_plaintext_body(raw)?,
         };
 
         // We don't have a TemplateRenderer::Markdown yet, so simply put everything
