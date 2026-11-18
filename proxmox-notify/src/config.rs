@@ -6,12 +6,12 @@ use proxmox_section_config::{SectionConfig, SectionConfigData, SectionConfigPlug
 use serde_json::Value;
 use tracing::error;
 
+use crate::Error;
 use crate::api_types::{
     BACKEND_NAME_SCHEMA, GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig, MATCHER_TYPENAME,
     MatcherConfig, SENDMAIL_TYPENAME, SMTP_TYPENAME, SendmailConfig, SmtpConfig, SmtpPrivateConfig,
     WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig,
 };
-use crate::{Context, Error};
 
 /// Section config schema for the public config file.
 pub fn config_parser() -> &'static SectionConfig {
@@ -139,51 +139,47 @@ pub struct Config {
 impl Config {
     /// Parse notification configuration from section config format.
     pub fn parse_section_config(
-        context: &Context,
         raw_config: &str,
         raw_private_config: &str,
+        builtin_config: Option<&SectionConfigData>,
     ) -> Result<Self, Error> {
         let (mut config, digest) = parse_config(raw_config)?;
         let (private_config, _) = parse_private_config(raw_private_config)?;
 
-        let default_config = context.default_config();
+        if let Some(builtin_config) = builtin_config {
+            for (key, (builtin_typename, builtin_value)) in &builtin_config.sections {
+                if let Some((typename, value)) = config.sections.get_mut(key) {
+                    if builtin_typename == typename && value == builtin_value {
+                        // Entry is built-in and the config entry section in notifications.cfg
+                        // is exactly the same.
+                        if let Some(obj) = value.as_object_mut() {
+                            obj.insert("origin".to_string(), Value::String("builtin".into()));
+                        } else {
+                            error!("section config entry is not an object. This should not happen");
+                        }
+                    } else {
+                        // Entry is built-in, but it has been modified by the user.
+                        if let Some(obj) = value.as_object_mut() {
+                            obj.insert(
+                                "origin".to_string(),
+                                Value::String("modified-builtin".into()),
+                            );
+                        } else {
+                            error!("section config entry is not an object. This should not happen");
+                        }
+                    }
+                } else {
+                    let mut val = builtin_value.clone();
 
-        let builtin_config = config_parser()
-            .parse("<builtin>", default_config)
-            .map_err(|err| Error::ConfigDeserialization(err.into()))?;
-
-        for (key, (builtin_typename, builtin_value)) in &builtin_config.sections {
-            if let Some((typename, value)) = config.sections.get_mut(key) {
-                if builtin_typename == typename && value == builtin_value {
-                    // Entry is built-in and the config entry section in notifications.cfg
-                    // is exactly the same.
-                    if let Some(obj) = value.as_object_mut() {
+                    if let Some(obj) = val.as_object_mut() {
                         obj.insert("origin".to_string(), Value::String("builtin".into()));
                     } else {
                         error!("section config entry is not an object. This should not happen");
                     }
-                } else {
-                    // Entry is built-in, but it has been modified by the user.
-                    if let Some(obj) = value.as_object_mut() {
-                        obj.insert(
-                            "origin".to_string(),
-                            Value::String("modified-builtin".into()),
-                        );
-                    } else {
-                        error!("section config entry is not an object. This should not happen");
-                    }
+                    config
+                        .set_data(key, builtin_typename, val)
+                        .map_err(|err| Error::ConfigDeserialization(err.into()))?;
                 }
-            } else {
-                let mut val = builtin_value.clone();
-
-                if let Some(obj) = val.as_object_mut() {
-                    obj.insert("origin".to_string(), Value::String("builtin".into()));
-                } else {
-                    error!("section config entry is not an object. This should not happen");
-                }
-                config
-                    .set_data(key, builtin_typename, val)
-                    .map_err(|err| Error::ConfigDeserialization(err.into()))?;
             }
         }
 
