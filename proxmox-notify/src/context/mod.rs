@@ -2,6 +2,9 @@ use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use std::sync::Arc;
 
+use proxmox_section_config::typed::SectionConfigData;
+
+use crate::config::ConfigEntity;
 use crate::error::BoxedError;
 
 #[cfg(any(feature = "pve-context", feature = "pbs-context"))]
@@ -51,7 +54,7 @@ pub trait ContextImpl: Send + Sync + Debug {
     /// Proxy configuration for the current node
     fn http_proxy_config(&self) -> Option<String>;
     /// Return default config for built-in targets/matchers.
-    fn default_config(&self) -> &'static str;
+    fn default_config(&self) -> &'static SectionConfigData<ConfigEntity>;
     /// Return the path of `filename` from `source` and a certain (optional) `namespace`
     fn lookup_template(
         &self,

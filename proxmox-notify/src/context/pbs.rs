@@ -1,11 +1,14 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
+use proxmox_section_config::typed::{ApiSectionDataEntry, SectionConfigData};
 use serde::Deserialize;
 use tracing::error;
 
 use proxmox_schema::{ObjectSchema, Schema, StringSchema};
 use proxmox_section_config::{SectionConfig, SectionConfigPlugin};
 
+use crate::config::ConfigEntity;
 use crate::context::{ContextImpl, TemplateSource, common};
 use crate::error::BoxedError;
 
@@ -101,8 +104,12 @@ impl ContextImpl for PBSContext {
         content.and_then(|content| common::lookup_datacenter_config_key(&content, "http-proxy"))
     }
 
-    fn default_config(&self) -> &'static str {
-        DEFAULT_CONFIG
+    fn default_config(&self) -> &'static SectionConfigData<ConfigEntity> {
+        static CONFIG: OnceLock<SectionConfigData<ConfigEntity>> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ConfigEntity::parse_section_config("builtin-config", DEFAULT_CONFIG)
+                .expect("built-in notification config must be valid")
+        })
     }
 
     fn lookup_template(

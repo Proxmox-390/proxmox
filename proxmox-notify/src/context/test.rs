@@ -1,4 +1,9 @@
+use std::sync::OnceLock;
+
+use proxmox_section_config::typed::SectionConfigData;
+
 use crate::Context;
+use crate::config::ConfigEntity;
 use crate::context::ContextImpl;
 use crate::error::BoxedError;
 
@@ -30,8 +35,9 @@ impl ContextImpl for TestContext {
         None
     }
 
-    fn default_config(&self) -> &'static str {
-        ""
+    fn default_config(&self) -> &'static SectionConfigData<ConfigEntity> {
+        static CONFIG: OnceLock<SectionConfigData<ConfigEntity>> = OnceLock::new();
+        CONFIG.get_or_init(SectionConfigData::default)
     }
 
     fn lookup_template(
