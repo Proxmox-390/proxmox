@@ -35,7 +35,7 @@ impl MatchExpression for NotificationMatcher {
 impl NotificationMatcher {
     /// Validate any additional constraints that cannot be expressed in the type system.
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        use crate::matcher::MatchDirective;
+        use crate::api_types::matcher::MatchDirective;
 
         match self {
             NotificationMatcher::Field(field_matcher) => field_matcher.validate(),

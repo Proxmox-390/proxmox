@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use proxmox_match_expression::Expression;
 use proxmox_schema::api_types::SAFE_ID_REGEX;
 
-use crate::{Error, Notification, matcher::expression::NotificationMatcher};
+use crate::{Error, Notification, api_types::expression::NotificationMatcher};
 
 use super::MatchDirective;
 

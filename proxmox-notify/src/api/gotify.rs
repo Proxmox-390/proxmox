@@ -3,7 +3,7 @@ use proxmox_http_error::HttpError;
 
 use crate::Config;
 use crate::api::http_err;
-use crate::endpoints::gotify::{
+use crate::api_types::{
     DeleteableGotifyProperty, GOTIFY_TYPENAME, GotifyConfig, GotifyConfigUpdater,
     GotifyPrivateConfig, GotifyPrivateConfigUpdater,
 };

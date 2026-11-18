@@ -15,15 +15,17 @@ use proxmox_schema::api;
 use proxmox_section_config::SectionConfigData;
 use proxmox_uuid::Uuid;
 
-pub mod matcher;
-use matcher::{MATCHER_TYPENAME, MatcherConfig};
-
+#[cfg(feature = "api-impl")]
 pub mod api;
+
 pub mod config;
 pub mod context;
 pub mod endpoints;
 pub mod renderer;
 pub mod schema;
+
+#[cfg(feature = "api-types")]
+pub mod api_types;
 
 mod error;
 pub use error::Error;
@@ -32,6 +34,9 @@ pub use context::Context;
 pub use context::ContextImpl;
 
 use endpoints::Endpoint;
+
+use crate::api_types::MATCHER_TYPENAME;
+use crate::api_types::MatcherConfig;
 
 #[api()]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd)]
@@ -312,7 +317,6 @@ pub struct Bus {
     matchers: Vec<MatcherConfig>,
 }
 
-#[allow(unused_macros)]
 macro_rules! parse_endpoints_with_private_config {
     ($config:ident, $public_config:ty, $private_config:ty, $endpoint_type:ident, $type_name:expr) => {
         (|| -> Result<Vec<Box<dyn Endpoint>>, Error> {
@@ -354,7 +358,6 @@ macro_rules! parse_endpoints_with_private_config {
     };
 }
 
-#[allow(unused_macros)]
 macro_rules! parse_endpoints_without_private_config {
     ($config:ident, $public_config:ty, $endpoint_type:ident, $type_name:expr) => {
         (|| -> Result<Vec<Box<dyn Endpoint>>, Error> {
@@ -377,75 +380,65 @@ macro_rules! parse_endpoints_without_private_config {
 impl Bus {
     /// Instantiate notification bus from a given configuration.
     pub fn from_config(config: &Config) -> Result<Self, Error> {
-        #[allow(unused_mut)]
         let mut endpoints = HashMap::new();
 
         // Instantiate endpoints
-        #[cfg(feature = "sendmail")]
-        {
-            use endpoints::sendmail::SENDMAIL_TYPENAME;
-            use endpoints::sendmail::{SendmailConfig, SendmailEndpoint};
-            endpoints.extend(
-                parse_endpoints_without_private_config!(
-                    config,
-                    SendmailConfig,
-                    SendmailEndpoint,
-                    SENDMAIL_TYPENAME
-                )?
-                .into_iter()
-                .map(|e| (e.name().into(), e)),
-            );
-        }
+        use crate::api_types::{SENDMAIL_TYPENAME, SendmailConfig};
+        use endpoints::sendmail::SendmailEndpoint;
+        endpoints.extend(
+            parse_endpoints_without_private_config!(
+                config,
+                SendmailConfig,
+                SendmailEndpoint,
+                SENDMAIL_TYPENAME
+            )?
+            .into_iter()
+            .map(|e| (e.name().into(), e)),
+        );
 
-        #[cfg(feature = "gotify")]
-        {
-            use endpoints::gotify::GOTIFY_TYPENAME;
-            use endpoints::gotify::{GotifyConfig, GotifyEndpoint, GotifyPrivateConfig};
-            endpoints.extend(
-                parse_endpoints_with_private_config!(
-                    config,
-                    GotifyConfig,
-                    GotifyPrivateConfig,
-                    GotifyEndpoint,
-                    GOTIFY_TYPENAME
-                )?
-                .into_iter()
-                .map(|e| (e.name().into(), e)),
-            );
-        }
-        #[cfg(feature = "smtp")]
-        {
-            use endpoints::smtp::SMTP_TYPENAME;
-            use endpoints::smtp::{SmtpConfig, SmtpEndpoint, SmtpPrivateConfig};
-            endpoints.extend(
-                parse_endpoints_with_private_config!(
-                    config,
-                    SmtpConfig,
-                    SmtpPrivateConfig,
-                    SmtpEndpoint,
-                    SMTP_TYPENAME
-                )?
-                .into_iter()
-                .map(|e| (e.name().into(), e)),
-            );
-        }
+        use crate::api_types::{GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig};
+        use crate::endpoints::gotify::GotifyEndpoint;
 
-        #[cfg(feature = "webhook")]
-        {
-            use endpoints::webhook::WEBHOOK_TYPENAME;
-            use endpoints::webhook::{WebhookConfig, WebhookEndpoint, WebhookPrivateConfig};
-            endpoints.extend(
-                parse_endpoints_with_private_config!(
-                    config,
-                    WebhookConfig,
-                    WebhookPrivateConfig,
-                    WebhookEndpoint,
-                    WEBHOOK_TYPENAME
-                )?
-                .into_iter()
-                .map(|e| (e.name().into(), e)),
-            );
-        }
+        endpoints.extend(
+            parse_endpoints_with_private_config!(
+                config,
+                GotifyConfig,
+                GotifyPrivateConfig,
+                GotifyEndpoint,
+                GOTIFY_TYPENAME
+            )?
+            .into_iter()
+            .map(|e| (e.name().into(), e)),
+        );
+
+        use crate::api_types::{SMTP_TYPENAME, SmtpConfig, SmtpPrivateConfig};
+        use endpoints::smtp::SmtpEndpoint;
+
+        endpoints.extend(
+            parse_endpoints_with_private_config!(
+                config,
+                SmtpConfig,
+                SmtpPrivateConfig,
+                SmtpEndpoint,
+                SMTP_TYPENAME
+            )?
+            .into_iter()
+            .map(|e| (e.name().into(), e)),
+        );
+
+        use crate::api_types::{WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig};
+        use endpoints::webhook::WebhookEndpoint;
+        endpoints.extend(
+            parse_endpoints_with_private_config!(
+                config,
+                WebhookConfig,
+                WebhookPrivateConfig,
+                WebhookEndpoint,
+                WEBHOOK_TYPENAME
+            )?
+            .into_iter()
+            .map(|e| (e.name().into(), e)),
+        );
 
         let matchers = config
             .config
@@ -473,7 +466,7 @@ impl Bus {
     ///
     /// Any errors will not be returned but only logged.
     pub fn send(&self, context: &Context, notification: &Notification) {
-        let targets = matcher::check_matches(self.matchers.as_slice(), notification);
+        let targets = api_types::check_matches(self.matchers.as_slice(), notification);
 
         for target in targets {
             if let Some(endpoint) = self.endpoints.get(target) {
@@ -535,8 +528,10 @@ mod tests {
 
     use proxmox_match_expression::Expression;
 
-    use crate::context::test;
-    use crate::matcher::{expression::NotificationMatcher, severity::SeverityMatcher};
+    use crate::{
+        api_types::{expression::NotificationMatcher, severity::SeverityMatcher},
+        context::{Context, test},
+    };
 
     use super::*;
 

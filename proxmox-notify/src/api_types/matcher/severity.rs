@@ -1,7 +1,7 @@
 use proxmox_match_expression::Expression;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Notification, Severity, matcher::expression::NotificationMatcher};
+use crate::{Error, Notification, Severity, api_types::expression::NotificationMatcher};
 
 use super::MatchDirective;
 

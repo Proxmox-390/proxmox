@@ -9,7 +9,6 @@ use proxmox_api_macro::api;
 use proxmox_schema::Updater;
 use proxmox_schema::api_types::COMMENT_SCHEMA;
 
-use crate::matcher::expression::NotificationMatcher;
 use crate::schema::ENTITY_NAME_SCHEMA;
 use crate::{Error, Notification, Origin};
 
@@ -18,9 +17,12 @@ pub mod expression;
 pub mod field;
 pub mod severity;
 
+use expression::NotificationMatcher;
+
 pub const MATCHER_TYPENAME: &str = "matcher";
 
 #[api]
+#[cfg(feature = "legacy-matchers")]
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 /// The mode in which the results of matches are combined.

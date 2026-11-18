@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use proxmox_time::DailyDuration;
 
-use crate::{Error, Notification, matcher::expression::NotificationMatcher};
+use crate::{Error, Notification, api_types::expression::NotificationMatcher};
 
 use super::MatchDirective;
 
@@ -127,7 +127,7 @@ pub use inline::*;
 mod test {
     use serde_json::Value;
 
-    use crate::{Notification, Severity, matcher::MatchDirective as _};
+    use crate::{Notification, Severity};
 
     use super::*;
 

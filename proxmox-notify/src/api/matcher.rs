@@ -3,7 +3,7 @@ use proxmox_http_error::HttpError;
 
 use crate::Config;
 use crate::api::http_err;
-use crate::matcher::{
+use crate::api_types::{
     DeleteableMatcherProperty, MATCHER_TYPENAME, MatcherConfig, MatcherConfigUpdater,
 };
 
@@ -204,13 +204,13 @@ pub fn delete_matcher(config: &mut Config, name: &str) -> Result<(), HttpError> 
     Ok(())
 }
 
-#[cfg(all(test, feature = "sendmail"))]
+#[cfg(all(test, feature = "send-impl"))]
 mod tests {
     use proxmox_match_expression::Expression;
 
     use super::*;
 
-    use crate::{context::test::test_context, matcher::expression::NotificationMatcher};
+    use crate::{api_types::expression::NotificationMatcher, context::test::test_context};
 
     fn empty_config() -> Config {
         let context = test_context();
@@ -266,7 +266,7 @@ matcher: matcher2
     #[test]
     #[cfg(feature = "legacy-matchers")]
     fn test_matcher_update() -> Result<(), HttpError> {
-        use crate::matcher::MatchModeOperator;
+        use crate::api_types::MatchModeOperator;
 
         let mut config = config_with_two_matchers();
 

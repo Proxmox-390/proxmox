@@ -5,7 +5,11 @@ use proxmox_schema::{ApiType, ObjectSchema};
 use proxmox_section_config::{SectionConfig, SectionConfigData, SectionConfigPlugin};
 
 use crate::Error;
-use crate::matcher::{MATCHER_TYPENAME, MatcherConfig};
+use crate::api_types::{
+    GOTIFY_TYPENAME, GotifyConfig, GotifyPrivateConfig, MATCHER_TYPENAME, MatcherConfig,
+    SENDMAIL_TYPENAME, SMTP_TYPENAME, SendmailConfig, SmtpConfig, SmtpPrivateConfig,
+    WEBHOOK_TYPENAME, WebhookConfig, WebhookPrivateConfig,
+};
 use crate::schema::BACKEND_NAME_SCHEMA;
 
 /// Section config schema for the public config file.
@@ -23,10 +27,7 @@ pub fn private_config_parser() -> &'static SectionConfig {
 fn config_init() -> SectionConfig {
     let mut config = SectionConfig::new(&BACKEND_NAME_SCHEMA);
 
-    #[cfg(feature = "sendmail")]
     {
-        use crate::endpoints::sendmail::{SENDMAIL_TYPENAME, SendmailConfig};
-
         const SENDMAIL_SCHEMA: &ObjectSchema = SendmailConfig::API_SCHEMA.unwrap_object_schema();
         config.register_plugin(SectionConfigPlugin::new(
             SENDMAIL_TYPENAME.to_string(),
@@ -34,10 +35,7 @@ fn config_init() -> SectionConfig {
             SENDMAIL_SCHEMA,
         ));
     }
-    #[cfg(feature = "smtp")]
     {
-        use crate::endpoints::smtp::{SMTP_TYPENAME, SmtpConfig};
-
         const SMTP_SCHEMA: &ObjectSchema = SmtpConfig::API_SCHEMA.unwrap_object_schema();
         config.register_plugin(SectionConfigPlugin::new(
             SMTP_TYPENAME.to_string(),
@@ -45,10 +43,7 @@ fn config_init() -> SectionConfig {
             SMTP_SCHEMA,
         ));
     }
-    #[cfg(feature = "gotify")]
     {
-        use crate::endpoints::gotify::{GOTIFY_TYPENAME, GotifyConfig};
-
         const GOTIFY_SCHEMA: &ObjectSchema = GotifyConfig::API_SCHEMA.unwrap_object_schema();
         config.register_plugin(SectionConfigPlugin::new(
             GOTIFY_TYPENAME.to_string(),
@@ -56,10 +51,7 @@ fn config_init() -> SectionConfig {
             GOTIFY_SCHEMA,
         ));
     }
-    #[cfg(feature = "webhook")]
     {
-        use crate::endpoints::webhook::{WEBHOOK_TYPENAME, WebhookConfig};
-
         const WEBHOOK_SCHEMA: &ObjectSchema = WebhookConfig::API_SCHEMA.unwrap_object_schema();
         config.register_plugin(SectionConfigPlugin::new(
             WEBHOOK_TYPENAME.to_string(),
@@ -79,45 +71,29 @@ fn config_init() -> SectionConfig {
 }
 
 fn private_config_init() -> SectionConfig {
-    #[allow(unused_mut)]
     let mut config = SectionConfig::new(&BACKEND_NAME_SCHEMA);
 
-    #[cfg(feature = "gotify")]
-    {
-        use crate::endpoints::gotify::{GOTIFY_TYPENAME, GotifyPrivateConfig};
+    const GOTIFY_SCHEMA: &ObjectSchema = GotifyPrivateConfig::API_SCHEMA.unwrap_object_schema();
+    config.register_plugin(SectionConfigPlugin::new(
+        GOTIFY_TYPENAME.to_string(),
+        Some(String::from("name")),
+        GOTIFY_SCHEMA,
+    ));
 
-        const GOTIFY_SCHEMA: &ObjectSchema = GotifyPrivateConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            GOTIFY_TYPENAME.to_string(),
-            Some(String::from("name")),
-            GOTIFY_SCHEMA,
-        ));
-    }
+    const SMTP_SCHEMA: &ObjectSchema = SmtpPrivateConfig::API_SCHEMA.unwrap_object_schema();
+    config.register_plugin(SectionConfigPlugin::new(
+        SMTP_TYPENAME.to_string(),
+        Some(String::from("name")),
+        SMTP_SCHEMA,
+    ));
 
-    #[cfg(feature = "smtp")]
-    {
-        use crate::endpoints::smtp::{SMTP_TYPENAME, SmtpPrivateConfig};
+    const WEBHOOK_SCHEMA: &ObjectSchema = WebhookPrivateConfig::API_SCHEMA.unwrap_object_schema();
+    config.register_plugin(SectionConfigPlugin::new(
+        WEBHOOK_TYPENAME.to_string(),
+        Some(String::from("name")),
+        WEBHOOK_SCHEMA,
+    ));
 
-        const SMTP_SCHEMA: &ObjectSchema = SmtpPrivateConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            SMTP_TYPENAME.to_string(),
-            Some(String::from("name")),
-            SMTP_SCHEMA,
-        ));
-    }
-
-    #[cfg(feature = "webhook")]
-    {
-        use crate::endpoints::webhook::{WEBHOOK_TYPENAME, WebhookPrivateConfig};
-
-        const WEBHOOK_SCHEMA: &ObjectSchema =
-            WebhookPrivateConfig::API_SCHEMA.unwrap_object_schema();
-        config.register_plugin(SectionConfigPlugin::new(
-            WEBHOOK_TYPENAME.to_string(),
-            Some(String::from("name")),
-            WEBHOOK_SCHEMA,
-        ));
-    }
     config
 }
 

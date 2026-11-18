@@ -3,7 +3,7 @@ use proxmox_http_error::HttpError;
 
 use crate::Config;
 use crate::api::{http_bail, http_err};
-use crate::endpoints::sendmail::{
+use crate::api_types::{
     DeleteableSendmailProperty, SENDMAIL_TYPENAME, SendmailConfig, SendmailConfigUpdater,
 };
 

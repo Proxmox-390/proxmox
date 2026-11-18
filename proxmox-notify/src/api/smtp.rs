@@ -3,7 +3,7 @@ use proxmox_http_error::HttpError;
 
 use crate::Config;
 use crate::api::{http_bail, http_err};
-use crate::endpoints::smtp::{
+use crate::api_types::{
     DeleteableSmtpProperty, SMTP_TYPENAME, SmtpConfig, SmtpConfigUpdater, SmtpPrivateConfig,
     SmtpPrivateConfigUpdater,
 };
@@ -204,8 +204,7 @@ pub fn delete_endpoint(config: &mut Config, name: &str) -> Result<(), HttpError>
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::api::test_helpers::*;
-    use crate::endpoints::smtp::SmtpMode;
+    use crate::{api::test_helpers::*, api_types::SmtpMode};
 
     pub fn add_smtp_endpoint_for_test(config: &mut Config, name: &str) -> Result<(), HttpError> {
         add_endpoint(

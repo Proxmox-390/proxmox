@@ -9,14 +9,10 @@ use proxmox_schema::api;
 use crate::{Config, Origin};
 
 pub mod common;
-#[cfg(feature = "gotify")]
 pub mod gotify;
 pub mod matcher;
-#[cfg(feature = "sendmail")]
 pub mod sendmail;
-#[cfg(feature = "smtp")]
 pub mod smtp;
-#[cfg(feature = "webhook")]
 pub mod webhook;
 
 // We have our own, local versions of http_err and http_bail, because
@@ -49,16 +45,12 @@ pub use http_err;
 /// Type of the endpoint.
 pub enum EndpointType {
     /// Sendmail endpoint
-    #[cfg(feature = "sendmail")]
     Sendmail,
     /// SMTP endpoint
-    #[cfg(feature = "smtp")]
     Smtp,
     /// Gotify endpoint
-    #[cfg(feature = "gotify")]
     Gotify,
     /// Webhook endpoint
-    #[cfg(feature = "webhook")]
     Webhook,
 }
 
@@ -86,7 +78,6 @@ pub struct Target {
 pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
     let mut targets = Vec::new();
 
-    #[cfg(feature = "gotify")]
     for endpoint in gotify::get_endpoints(config)? {
         targets.push(Target {
             name: endpoint.name,
@@ -97,7 +88,6 @@ pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
         })
     }
 
-    #[cfg(feature = "sendmail")]
     for endpoint in sendmail::get_endpoints(config)? {
         targets.push(Target {
             name: endpoint.name,
@@ -108,7 +98,6 @@ pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
         })
     }
 
-    #[cfg(feature = "smtp")]
     for endpoint in smtp::get_endpoints(config)? {
         targets.push(Target {
             name: endpoint.name,
@@ -119,7 +108,6 @@ pub fn get_targets(config: &Config) -> Result<Vec<Target>, HttpError> {
         })
     }
 
-    #[cfg(feature = "webhook")]
     for endpoint in webhook::get_endpoints(config)? {
         targets.push(Target {
             name: endpoint.name,
@@ -140,26 +128,11 @@ fn verify_digest(config: &Config, digest: Option<ConfigDigest>) -> Result<(), Ht
         .map_err(|err| http_err!(BAD_REQUEST, "{err}"))
 }
 
-fn ensure_endpoint_exists(#[allow(unused)] config: &Config, name: &str) -> Result<(), HttpError> {
-    #[allow(unused_mut)]
-    let mut exists = false;
-
-    #[cfg(feature = "sendmail")]
-    {
-        exists = exists || sendmail::get_endpoint(config, name).is_ok();
-    }
-    #[cfg(feature = "gotify")]
-    {
-        exists = exists || gotify::get_endpoint(config, name).is_ok();
-    }
-    #[cfg(feature = "smtp")]
-    {
-        exists = exists || smtp::get_endpoint(config, name).is_ok();
-    }
-    #[cfg(feature = "webhook")]
-    {
-        exists = exists || webhook::get_endpoint(config, name).is_ok();
-    }
+fn ensure_endpoint_exists(config: &Config, name: &str) -> Result<(), HttpError> {
+    let mut exists = sendmail::get_endpoint(config, name).is_ok();
+    exists = exists || gotify::get_endpoint(config, name).is_ok();
+    exists = exists || smtp::get_endpoint(config, name).is_ok();
+    exists = exists || webhook::get_endpoint(config, name).is_ok();
 
     if !exists {
         http_bail!(NOT_FOUND, "endpoint '{name}' does not exist")
@@ -258,7 +231,6 @@ fn get_referenced_entities(config: &Config, entity: &str) -> HashSet<String> {
     expanded
 }
 
-#[allow(unused)]
 fn set_private_config_entry<T: Serialize>(
     config: &mut Config,
     private_config: T,
@@ -277,7 +249,6 @@ fn set_private_config_entry<T: Serialize>(
         })
 }
 
-#[allow(unused)]
 fn remove_private_config_entry(config: &mut Config, name: &str) -> Result<(), HttpError> {
     config.private_config.sections.remove(name);
     Ok(())
@@ -294,12 +265,10 @@ mod test_helpers {
     }
 }
 
-#[cfg(all(test, feature = "gotify", feature = "sendmail"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::endpoints::gotify::{GotifyConfig, GotifyPrivateConfig};
-    use crate::endpoints::sendmail::SendmailConfig;
-    use crate::matcher::MatcherConfig;
+    use crate::api_types::{GotifyConfig, GotifyPrivateConfig, MatcherConfig, SendmailConfig};
 
     fn prepare_config() -> Result<Config, HttpError> {
         let mut config = test_helpers::empty_config();

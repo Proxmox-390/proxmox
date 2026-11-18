@@ -1,8 +1,7 @@
 use std::path::Path;
 
-use crate::context::{ContextImpl, common};
+use crate::context::{ContextImpl, TemplateSource, common};
 use crate::error::BoxedError;
-use crate::renderer::TemplateSource;
 
 fn lookup_mail_address(content: &str, user: &str) -> Option<String> {
     common::normalize_for_return(content.lines().find_map(|line| {

@@ -7,7 +7,7 @@ use proxmox_http_error::HttpError;
 use proxmox_schema::property_string::PropertyString;
 
 use crate::api::http_err;
-use crate::endpoints::webhook::{
+use crate::api_types::{
     DeleteableWebhookProperty, KeyAndBase64Val, WEBHOOK_TYPENAME, WebhookConfig,
     WebhookConfigUpdater, WebhookPrivateConfig,
 };
@@ -293,7 +293,7 @@ pub fn delete_endpoint(config: &mut Config, name: &str) -> Result<(), HttpError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{api::test_helpers::empty_config, endpoints::webhook::HttpMethod};
+    use crate::{api::test_helpers::empty_config, api_types::HttpMethod};
 
     pub fn add_default_webhook_endpoint(config: &mut Config) -> Result<(), HttpError> {
         add_endpoint(

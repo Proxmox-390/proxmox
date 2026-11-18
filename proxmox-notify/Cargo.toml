@@ -13,27 +13,27 @@ rust-version.workspace = true
 
 [dependencies]
 const_format.workspace = true
-handlebars = { workspace = true }
+handlebars = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 lettre = { workspace = true, optional = true }
 tracing.workspace = true
 mail-parser = { workspace = true, optional = true }
 percent-encoding = { workspace = true, optional = true }
-regex.workspace = true
+regex = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-serde_regex.workspace = true
+serde_regex = { workspace = true, optional = true }
 thiserror.workspace = true
 
-proxmox-api-macro.workspace = true
+proxmox-api-macro = { workspace = true, optional = true }
 proxmox-base64 = { workspace = true, optional = true }
-proxmox-config-digest = { workspace = true, features = ["openssl"] }
+proxmox-config-digest = { workspace = true, features = ["openssl"], optional = true }
 proxmox-http = { workspace = true, features = ["client-sync"], optional = true }
-proxmox-http-error.workspace = true
-proxmox-human-byte.workspace = true
-proxmox-match-expression.workspace = true
+proxmox-http-error = { workspace = true, optional = true }
+proxmox-human-byte = { workspace = true, optional = true }
+proxmox-match-expression = { workspace = true, optional = true }
 proxmox-schema = { workspace = true, features = ["api-macro", "api-types"] }
-proxmox-section-config = { workspace = true }
+proxmox-section-config = { workspace = true, optional = true }
 proxmox-serde.workspace = true
 proxmox-sendmail = { workspace = true, optional = true }
 proxmox-sys = { workspace = true, optional = true }
@@ -41,12 +41,35 @@ proxmox-time.workspace = true
 proxmox-uuid = { workspace = true, features = ["serde"] }
 
 [features]
-default = ["sendmail", "gotify", "smtp", "webhook"]
+default = ["send-impl", "api-types"]
+api-impl = [
+    "api-types",
+    "dep:proxmox-config-digest",
+    "dep:proxmox-http-error",
+    "dep:proxmox-section-config",
+]
+api-types = [
+    "dep:proxmox-api-macro",
+    "dep:proxmox-base64",
+    "dep:proxmox-match-expression",
+    "dep:regex",
+    "dep:serde_regex",
+]
+send-impl = [
+    "api-types",
+    "dep:http",
+    "dep:lettre",
+    "dep:handlebars",
+    "dep:proxmox-config-digest",
+    "dep:percent-encoding",
+    "dep:proxmox-base64",
+    "dep:proxmox-http",
+    "dep:proxmox-human-byte",
+    "dep:proxmox-section-config",
+    "dep:proxmox-sendmail",
+    "dep:proxmox-sys",
+]
 mail-forwarder = ["dep:mail-parser", "dep:proxmox-sys", "proxmox-sendmail/mail-forwarder"]
-sendmail = ["dep:proxmox-sys", "dep:proxmox-sendmail"]
-gotify = ["dep:proxmox-http", "dep:http"]
 pve-context = ["dep:proxmox-sys", "legacy-matchers"]
 pbs-context = ["dep:proxmox-sys", "legacy-matchers"]
-smtp = ["dep:lettre"]
-webhook = ["dep:http", "dep:percent-encoding", "dep:proxmox-base64", "dep:proxmox-http"]
 legacy-matchers = []
