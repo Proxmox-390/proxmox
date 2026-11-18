@@ -417,7 +417,7 @@ pub struct NodeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_log_max_days: Option<usize>,
 
-    /// Consent banner text
+    /// Consent text that is displayed before logging in. Needs to be base64 encoded
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consent_text: Option<String>,
 
