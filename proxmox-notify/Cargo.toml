@@ -26,7 +26,7 @@ serde_regex = { workspace = true, optional = true }
 thiserror.workspace = true
 
 proxmox-api-macro = { workspace = true, optional = true }
-proxmox-base64 = { workspace = true, optional = true }
+proxmox-base64 = { workspace = true, features = ["serde"]}
 proxmox-config-digest = { workspace = true, features = ["openssl"], optional = true }
 proxmox-http = { workspace = true, optional = true }
 proxmox-http-error = { workspace = true, optional = true }
@@ -55,7 +55,6 @@ api-impl = [
 ]
 api-types = [
     "dep:proxmox-api-macro",
-    "dep:proxmox-base64",
     "dep:proxmox-match-expression",
     "dep:regex",
     "dep:serde_regex",
@@ -68,7 +67,6 @@ send-impl = [
     "dep:proxmox-config-digest",
     "dep:mail-parser",
     "dep:percent-encoding",
-    "dep:proxmox-base64",
     "dep:proxmox-http",
     "proxmox-http/client-sync",
     "dep:proxmox-human-byte",

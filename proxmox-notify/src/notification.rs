@@ -65,6 +65,10 @@ pub enum Content {
     #[serde(rename_all = "kebab-case")]
     ForwardedMail {
         /// Raw mail contents
+        #[serde(
+            serialize_with = "proxmox_base64::serialize_as_base64",
+            deserialize_with = "proxmox_base64::deserialize_from_base64"
+        )]
         raw: Vec<u8>,
     },
 }
@@ -246,6 +250,39 @@ mod tests {
             notification.fields().get("type").map(String::as_str),
             Some("vzdump")
         );
+    }
+
+    #[test]
+    fn forwarded_mail_base64_roundtrip() {
+        // Not valid UTF-8 and not a multiple of three bytes, so the encoding needs padding.
+        let content = Content::ForwardedMail {
+            raw: b"\xff\x00mai".to_vec(),
+        };
+
+        let serialized = serde_json::to_value(&content).unwrap();
+        assert_eq!(serialized, json!({"forwarded-mail": {"raw": "/wBtYWk="}}));
+
+        let deserialized: Content = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, content);
+
+        let content = Content::ForwardedMail {
+            raw: TEST_MAIL.to_vec(),
+        };
+
+        let serialized = serde_json::to_value(&content).unwrap();
+        assert_eq!(
+            serialized["forwarded-mail"]["raw"],
+            proxmox_base64::encode(TEST_MAIL)
+        );
+
+        let deserialized: Content = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized, content);
+    }
+
+    #[test]
+    fn forwarded_mail_base64_invalid() {
+        let result = serde_json::from_value::<Content>(json!({"forwarded-mail": {"raw": "$$$"}}));
+        assert!(result.is_err());
     }
 
     #[test]
