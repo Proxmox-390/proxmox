@@ -66,9 +66,6 @@ pub enum Content {
     ForwardedMail {
         /// Raw mail contents
         raw: Vec<u8>,
-        /// UID to use when calling sendmail
-        #[allow(dead_code)] // Unused in some feature flag permutations
-        uid: Option<u32>,
     },
 }
 
@@ -120,10 +117,9 @@ impl Notification {
         severity: Severity,
         raw_mail: Vec<u8>,
         fields: HashMap<String, String>,
-        uid: Option<u32>,
     ) -> Result<Self, Error> {
         Ok(Self {
-            content: Content::ForwardedMail { raw: raw_mail, uid },
+            content: Content::ForwardedMail { raw: raw_mail },
             metadata: Metadata {
                 severity,
                 additional_fields: fields,
