@@ -209,6 +209,7 @@ pub struct IpLink {
     operstate: String,
     #[serde(default)]
     flags: Vec<LinkFlag>,
+    master: Option<String>,
 }
 
 impl IpLink {
@@ -286,6 +287,11 @@ impl IpLink {
     /// Returns whether the interface is currently in an UP state.
     pub fn active(&self) -> bool {
         self.operstate == "UP"
+    }
+
+    /// The name of the device this interface is enslaved to, e.g. a bridge, bond or VRF.
+    pub fn master(&self) -> Option<&str> {
+        self.master.as_deref()
     }
 }
 
@@ -427,7 +433,8 @@ mod tests {
   "gro_ipv4_max_size": 65536
 }"#;
 
-        serde_json::from_str::<IpLink>(interface).unwrap();
+        let link = serde_json::from_str::<IpLink>(interface).unwrap();
+        assert_eq!(link.master(), None);
     }
 
     #[test]
@@ -511,7 +518,8 @@ mod tests {
     ]
 }"#;
 
-        serde_json::from_str::<IpLink>(interface).unwrap();
+        let link = serde_json::from_str::<IpLink>(interface).unwrap();
+        assert_eq!(link.master(), Some("vmbr0"));
     }
 
     #[test]
