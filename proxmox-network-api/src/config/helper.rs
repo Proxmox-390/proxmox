@@ -130,6 +130,34 @@ pub struct SlaveData {
 pub struct LinkInfo {
     info_slave_data: Option<SlaveData>,
     info_kind: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_info_data")]
+    info_data: InfoData,
+}
+
+/// The `id` and `protocol` from the `info_data` of a link, e.g. of a VLAN interface.
+#[derive(Debug, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+struct InfoData {
+    id: Option<u64>,
+    protocol: Option<String>,
+}
+
+/// Extracts the `id` and `protocol` from the `info_data` of a link.
+///
+/// The fields of `info_data` and their types depend on the kind of the link, e.g. `id` is the VNI
+/// for VXLAN interfaces, so anything that does not fit is ignored instead of failing to parse the
+/// whole link.
+fn deserialize_info_data<'de, D>(deserializer: D) -> Result<InfoData, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let info_data: Option<serde_json::Value> = serde::Deserialize::deserialize(deserializer)?;
+
+    Ok(InfoData {
+        id: info_data.as_ref().and_then(|data| data.get("id")?.as_u64()),
+        protocol: info_data
+            .as_ref()
+            .and_then(|data| Some(data.get("protocol")?.as_str()?.to_string())),
+    })
 }
 
 impl LinkInfo {
@@ -141,6 +169,24 @@ impl LinkInfo {
     /// The kind of the link, e.g. `bridge`, `vlan` or `wireguard`. Unset for physical interfaces.
     pub fn info_kind(&self) -> Option<&String> {
         self.info_kind.as_ref()
+    }
+
+    /// The VLAN ID of a VLAN interface.
+    pub fn vlan_id(&self) -> Option<u16> {
+        if self.info_kind.as_deref() != Some("vlan") {
+            return None;
+        }
+
+        self.info_data.id.and_then(|id| u16::try_from(id).ok())
+    }
+
+    /// The protocol of a VLAN interface, `802.1Q` or `802.1ad`.
+    pub fn vlan_protocol(&self) -> Option<&str> {
+        if self.info_kind.as_deref() != Some("vlan") {
+            return None;
+        }
+
+        self.info_data.protocol.as_deref()
     }
 }
 
@@ -210,6 +256,7 @@ pub struct IpLink {
     #[serde(default)]
     flags: Vec<LinkFlag>,
     master: Option<String>,
+    link: Option<String>,
 }
 
 impl IpLink {
@@ -292,6 +339,11 @@ impl IpLink {
     /// The name of the device this interface is enslaved to, e.g. a bridge, bond or VRF.
     pub fn master(&self) -> Option<&str> {
         self.master.as_deref()
+    }
+
+    /// The name of the device this interface is stacked on, e.g. the parent of a VLAN interface.
+    pub fn link(&self) -> Option<&str> {
+        self.link.as_deref()
     }
 }
 
@@ -386,6 +438,52 @@ pub fn network_reload() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_deserialize_vlan_and_vxlan_interface() {
+        let vlan = r#"{
+    "ifindex": 9,
+    "link": "vmbr0",
+    "ifname": "vmbr0.100",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "operstate": "UP",
+    "link_type": "ether",
+    "address": "bc:24:11:e2:e1:01",
+    "master": "vrf_zone1",
+    "linkinfo": {
+        "info_kind": "vlan",
+        "info_data": { "protocol": "802.1Q", "id": 100, "flags": ["REORDER_HDR"] },
+        "info_slave_kind": "vrf",
+        "info_slave_data": { "table": 1001 }
+    }
+}"#;
+
+        let link = serde_json::from_str::<IpLink>(vlan).unwrap();
+        assert_eq!(link.link(), Some("vmbr0"));
+        assert_eq!(link.linkinfo().and_then(LinkInfo::vlan_id), Some(100));
+        assert_eq!(
+            link.linkinfo().and_then(LinkInfo::vlan_protocol),
+            Some("802.1Q")
+        );
+
+        let vxlan = r#"{
+    "ifindex": 10,
+    "ifname": "vxlan_vnet1",
+    "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
+    "operstate": "UNKNOWN",
+    "link_type": "ether",
+    "address": "8a:7f:0e:2b:45:61",
+    "linkinfo": {
+        "info_kind": "vxlan",
+        "info_data": { "id": 100000, "local": "192.0.2.1", "port": 4789 }
+    }
+}"#;
+
+        let link = serde_json::from_str::<IpLink>(vxlan).unwrap();
+        assert_eq!(link.link(), None);
+        assert_eq!(link.linkinfo().and_then(LinkInfo::vlan_id), None);
+        assert_eq!(link.linkinfo().and_then(LinkInfo::vlan_protocol), None);
+    }
 
     #[test]
     fn test_deserialize_ipv6_to_ipv4_tunnel() {
