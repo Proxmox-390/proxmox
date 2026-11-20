@@ -1,3 +1,16 @@
+rust-proxmox-network-api (1.0.9-1) trixie; urgency=medium
+
+  * add the missing getters for parsed fields of links.
+
+  * parse the flags of links, as the operational state alone does not tell
+    whether some interfaces, such as WireGuard ones, are up.
+
+  * expose the master device of a link, and the parent device, VLAN ID and
+    VLAN protocol of VLAN interfaces, which the SDN stack uses to determine
+    the members of zone VRFs.
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 20 Nov 2026 05:34:22 +0100
+
 rust-proxmox-network-api (1.0.8-1) trixie; urgency=medium
 
   * convert carriage returns in interface comments to newlines when writing the
