@@ -1,3 +1,10 @@
+rust-proxmox-wireguard (0.1.3-1) trixie; urgency=medium
+
+  * derive equality and ordering for public keys, so that they can be compared
+    and used as keys of maps and sets.
+
+ -- Proxmox Support Team <support@proxmox.com>  Fri, 20 Nov 2026 05:34:22 +0100
+
 rust-proxmox-wireguard (0.1.2-1) trixie; urgency=medium
 
   * rebuild against proxmox-ini 0.1.1 to pick up the removal of a leftover
