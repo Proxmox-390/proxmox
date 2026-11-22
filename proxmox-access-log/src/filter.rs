@@ -70,12 +70,13 @@ pub struct AccessLogFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<i64>,
 
-    /// Only requests of this user or API token. A user also matches its own API tokens.
+    /// Only requests whose user or API token contains this text, ignoring case, so a user also
+    /// matches its own API tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_id: Option<String>,
 
-    /// Whether the auth-id only matches itself, so a user does not match its API tokens, and `-`
-    /// matches requests without any.
+    /// Whether the auth-id only matches itself as a whole, so a user does not match its API tokens,
+    /// and `-` matches requests without any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_id_exact: Option<bool>,
 
@@ -163,9 +164,11 @@ impl AccessLogFilter {
             && self
                 .auth_id
                 .as_deref()
+                .filter(|filter| !filter.is_empty())
                 .is_none_or(|filter| match self.auth_id_exact {
                     Some(true) => auth_id.unwrap_or("-") == filter,
-                    _ => auth_id.is_some_and(|auth_id| auth_id_matches(auth_id, filter)),
+                    _ => auth_id
+                        .is_some_and(|auth_id| lowercase(auth_id).contains(&*lowercase(filter))),
                 })
             && self
                 .client
@@ -221,6 +224,20 @@ fn search_matches(entry: &AccessLogEntry, text: &str) -> bool {
             .is_some_and(|path| path_contains(path, &text, true))
 }
 
+/// The lowercase form of a text, character by character, so that a part of a text stays a part of
+/// it, which `str::to_lowercase` does not ensure for a final sigma. Lowercase ASCII text, like most
+/// user IDs, stays borrowed, as filters look at every line of a log.
+fn lowercase(text: &str) -> Cow<'_, str> {
+    if text
+        .bytes()
+        .any(|byte| byte.is_ascii_uppercase() || !byte.is_ascii())
+    {
+        Cow::Owned(text.chars().flat_map(char::to_lowercase).collect())
+    } else {
+        Cow::Borrowed(text)
+    }
+}
+
 fn collapse_slashes(text: &str) -> Cow<'_, str> {
     if !text.contains("//") {
         return Cow::Borrowed(text);
@@ -232,15 +249,6 @@ fn collapse_slashes(text: &str) -> Cow<'_, str> {
         }
     }
     Cow::Owned(collapsed)
-}
-
-/// Whether `auth_id` is the `filter` itself or, if that is a user, one of its `user!token` IDs.
-fn auth_id_matches(auth_id: &str, filter: &str) -> bool {
-    auth_id == filter
-        || (!filter.contains('!')
-            && auth_id
-                .strip_prefix(filter)
-                .is_some_and(|token| token.starts_with('!')))
 }
 
 #[cfg(test)]
@@ -401,10 +409,13 @@ mod tests {
         for (auth_id, expected) in [
             ("root@pam!t", true),
             ("root@pam", true),
-            ("root@pa", false),
-            ("root@pam!", false),
+            ("root", true),
+            ("ROOT@PAM!T", true),
+            ("pam!t", true),
             ("root@pam!other", false),
-            ("t", false),
+            ("root@pve", false),
+            // like an empty field, no filter
+            ("", true),
         ] {
             let filter = AccessLogFilter {
                 auth_id: Some(auth_id.to_string()),
@@ -490,6 +501,18 @@ mod tests {
     }
 
     #[test]
+    fn user_parts_match_independent_of_their_context() {
+        let entry = entry("ΟΣ@pam", "GET /api2/json/version", 200);
+        for auth_id in ["Σ", "σ", "ΟΣ", "οσ", "Σ@PAM"] {
+            let filter = AccessLogFilter {
+                auth_id: Some(auth_id.to_string()),
+                ..Default::default()
+            };
+            assert!(filter.matches(&entry, LogFormat::RestServer), "{auth_id}");
+        }
+    }
+
+    #[test]
     fn exact_user_path_group_and_user_agent() {
         let token = entry(
             "root@pam!t",
@@ -506,6 +529,7 @@ mod tests {
         assert!(exact("root@pam!t").matches(&token, LogFormat::RestServer));
         assert!(exact("-").matches(&anonymous, LogFormat::RestServer));
         assert!(!exact("-").matches(&token, LogFormat::RestServer));
+        assert!(exact("").matches(&anonymous, LogFormat::RestServer));
 
         for (group, expected) in [
             ("/api2/json/nodes/{node}/qemu/{id}/status", true),
