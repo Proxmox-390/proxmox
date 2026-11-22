@@ -137,8 +137,9 @@ pub fn log_files(path: &Path) -> Result<Vec<PathBuf>, Error> {
     }
 
     // While a rotated copy gets compressed both versions exist, of which only the uncompressed
-    // one is complete.
-    files.sort_by_key(|(key, _)| *key);
+    // one is complete. Of a gzip and a zstd copy, as after changing the compression, the name
+    // picks the same one each time, independent of the directory order.
+    files.sort();
     files.dedup_by_key(|((number, _), _)| *number);
 
     Ok(files.into_iter().map(|(_, path)| path).collect())
@@ -2528,6 +2529,24 @@ mod tests {
         .unwrap_err();
         assert!(err.is::<InvalidRequest>(), "{err}");
         assert!(err.to_string().contains("several log files"), "{err}");
+    }
+
+    #[test]
+    fn one_copy_per_number_independent_of_directory_order() {
+        for names in [
+            ["access.log.1.gz", "access.log.1.zst"],
+            ["access.log.1.zst", "access.log.1.gz"],
+        ] {
+            let dir = TestDir::new("copy-per-number");
+            dir.write("access.log", b"");
+            for name in names {
+                dir.write(name, &gzip(b""));
+            }
+            assert_eq!(
+                log_files(&dir.log()).unwrap(),
+                [dir.log(), dir.0.join("access.log.1.gz")],
+            );
+        }
     }
 
     #[test]
