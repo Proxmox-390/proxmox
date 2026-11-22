@@ -1261,11 +1261,13 @@ impl<'a> Scan<'a> {
     fn identify(&self, file: &LogFile, lines: usize) -> Result<Identity, Error> {
         let read = Rc::new(Cell::new(0));
         let input_failed = Rc::new(Cell::new(false));
+        let mut input_cut = None;
         let (fields, error) = match file.compressed {
             true => {
                 // Bound compressed input as well as output, including streams that emit no lines.
                 let input =
                     InputReader::new(&file.file, &read, 2 * FINGERPRINT_BYTES, &input_failed)?;
+                input_cut = Some(Rc::clone(&input.cut));
                 match decompress(input, &file.path) {
                     Ok(decoder) => identifying_fields(decoder, lines),
                     Err(err) => (Vec::new(), Some(err)),
@@ -1288,7 +1290,9 @@ impl<'a> Scan<'a> {
             bail!("unable to read log file {:?} - {err}", file.path);
         }
         if fields.is_empty() {
+            // a decoder error at cut input is the end of the input read, not damage
             return Ok(match error {
+                _ if input_cut.is_some_and(|cut| cut.get()) => Identity::TooLarge,
                 Some(_) => Identity::Damaged,
                 None => Identity::Empty,
             });
@@ -1448,6 +1452,15 @@ impl<'a> Scan<'a> {
                         end: None,
                     });
                 }
+                Identity::TooLarge => {
+                    log::warn!("skipping log file {:?} too large to identify", file.path);
+                    self.gaps.push(Gap {
+                        file: file.name(),
+                        reason: GapReason::TooLarge,
+                        start: 0,
+                        end: None,
+                    });
+                }
             }
         }
         Ok(None)
@@ -1530,6 +1543,8 @@ enum Identity {
     Empty,
     /// The compressed copy is damaged before its first complete line.
     Damaged,
+    /// The compressed copy has no complete line in the part of its input read to identify it.
+    TooLarge,
 }
 
 /// The address, auth-id and timestamp fields of lines, or nothing for an invalid line.
@@ -3318,5 +3333,35 @@ mod tests {
         let lines_end = data.iter().rposition(|&b| b == b'\n').unwrap() as u64 + 1;
         assert!(lines_end < data.len() as u64);
         assert_eq!(stats.covered[0].end, lines_end);
+    }
+
+    /// Writes a zstd copy that starts with a skippable frame of `size` bytes, followed by `lines`.
+    /// The frame's content stays a hole in the file, so it takes no space.
+    fn write_skippable_zstd(dir: &TestDir, name: &str, size: u64, lines: &str) {
+        let file = std::fs::File::create(dir.0.join(name)).unwrap();
+        let mut header = 0x184d_2a50_u32.to_le_bytes().to_vec();
+        header.extend_from_slice(&u32::try_from(size - 8).unwrap().to_le_bytes());
+        file.write_all_at(&header, 0).unwrap();
+        file.write_all_at(&zstd(lines.as_bytes()), size).unwrap();
+    }
+
+    #[test]
+    fn copies_too_large_to_identify_are_gaps() {
+        let limits = Limits {
+            read: 64 * 1024,
+            ..UNLIMITED
+        };
+        // identifying the copy stops at the end of the frame, or within it
+        for size in [2 * FINGERPRINT_BYTES, 2 * FINGERPRINT_BYTES + 1] {
+            let dir = TestDir::new("too-large-to-identify");
+            dir.write("access.log", line(0, 0).as_bytes());
+            write_skippable_zstd(&dir, "access.log.1.zst", size, &line(1, 0));
+            let (found, pages) = all_pages(&dir.log(), &AccessLogFilter::default(), None, &limits);
+            assert_eq!(found, ["/0/0"], "{size}");
+            let last = pages.last().unwrap();
+            assert!(!last.complete, "{size}");
+            let reasons: Vec<_> = last.gaps.iter().map(|gap| gap.reason).collect();
+            assert_eq!(reasons, [GapReason::TooLarge], "{size}");
+        }
     }
 }
