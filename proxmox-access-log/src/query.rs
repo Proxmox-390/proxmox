@@ -1728,8 +1728,12 @@ impl InputReader {
 
 impl Read for InputReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // decoders can read again after the end, which must not probe the file again
+        if self.cut.get() || buf.is_empty() {
+            return Ok(0);
+        }
         let left = self.limit.saturating_sub(self.read.get());
-        if left == 0 && !buf.is_empty() {
+        if left == 0 {
             // tell the end of the budget from the end of the file
             let mut probe = [0];
             let more = self
