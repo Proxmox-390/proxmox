@@ -428,10 +428,18 @@ fn resolve_locations(packages: &[String], deadline: Instant) -> Vec<Result<Locat
                 )?;
                 match (
                     output.status,
-                    associate_locations(std::slice::from_ref(package), &output.stdout, ""),
+                    associate_locations(
+                        std::slice::from_ref(package),
+                        &output.stdout,
+                        &output.stderr,
+                    ),
                 ) {
                     (None, _) => Err(TIMED_OUT.to_string()),
-                    (Some(status), Some(mut locations)) if status.success() => locations.remove(0),
+                    (Some(status), Some(mut locations))
+                        if status.success() || locations[0].is_err() =>
+                    {
+                        locations.remove(0)
+                    }
                     _ => Err(NOT_IN_LISTS.to_string()),
                 }
             })
@@ -463,21 +471,28 @@ fn associate_locations(
         let (index, _) = found.next()?;
         found.next().is_none().then_some(index)
     };
-    let mut failed = HashSet::new();
+    let mut failed = HashMap::new();
     for line in error.lines() {
         let Some(message) = line.strip_prefix("E: ") else {
             continue;
         };
-        let package = if let Some(name) = message.strip_prefix("Unable to locate package ") {
-            find(name, None)
+        let (package, error) = if let Some(name) = message.strip_prefix("Unable to locate package ")
+        {
+            (find(name, None), NOT_IN_LISTS)
+        } else if let Some(spec) = message.strip_prefix("Changelog unavailable for ") {
+            // the repository names no changelog location, like most of those of third parties;
+            // for downloads, APT appends the reason after a space, which versions do not contain
+            let spec = spec.split_once(' ').map_or(spec, |(spec, _)| spec);
+            let (name, version) = spec.split_once('=')?;
+            (find(name, Some(version)), NOT_AVAILABLE)
         } else {
             let (version, name) = message
                 .strip_prefix("Version '")?
                 .strip_suffix("' was not found")?
                 .split_once("' for '")?;
-            find(name, Some(version))
+            (find(name, Some(version)), NOT_IN_LISTS)
         };
-        failed.insert(package?);
+        failed.insert(package?, error);
     }
     if locations.len() + failed.len() != packages.len() {
         return None;
@@ -485,9 +500,9 @@ fn associate_locations(
     let mut locations = locations.into_iter();
     Some(
         (0..packages.len())
-            .map(|index| match failed.contains(&index) {
-                true => Err(NOT_IN_LISTS.to_string()),
-                false => Ok(locations.next().unwrap()),
+            .map(|index| match failed.get(&index) {
+                Some(error) => Err(error.to_string()),
+                None => Ok(locations.next().unwrap()),
             })
             .collect(),
     )
@@ -1503,6 +1518,24 @@ mod tests {
         // an error that names no package leaves the association open
         assert!(associate_locations(&packages, output, "E: Something else\n").is_none());
         assert!(associate_locations(&packages, output, "").is_none());
+    }
+
+    #[test]
+    fn associate_repositories_without_changelogs() {
+        let packages: Vec<String> = ["bash=1", "vendor-tool=2:1.0-1", "libvendor:i386=3"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let associated = associate_locations(
+            &packages,
+            "'https://example.invalid/bash_1' bash.changelog\n",
+            "E: Changelog unavailable for vendor-tool=2:1.0-1\n\
+             E: Changelog unavailable for libvendor:i386=3 (no location)\n",
+        )
+        .unwrap();
+        assert_eq!(associated[0].as_ref().unwrap().file, "bash.changelog");
+        assert_eq!(associated[1].as_ref().unwrap_err(), NOT_AVAILABLE);
+        assert_eq!(associated[2].as_ref().unwrap_err(), NOT_AVAILABLE);
     }
 
     #[test]
