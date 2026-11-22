@@ -301,8 +301,9 @@ fn stats_with_limits(
                 Outcome::Done => Ok(0..scan.lines_end.unwrap_or(0)),
                 Outcome::Stopped { position, reason } => {
                     let reached = match position {
+                        // nothing counted if no line ended yet, as in an overlong unterminated tail
                         Position::Line(start) | Position::WithinLine(start) => {
-                            Some(start..scan.lines_end.unwrap_or(file.len))
+                            scan.lines_end.map(|end| start..end)
                         }
                         Position::End => None,
                     };
@@ -3323,6 +3324,23 @@ mod tests {
         assert_eq!(stats.total.requests, 2);
         assert_eq!(stats.covered[0].start, 0);
         assert_eq!(stats.covered[0].end, lines.len() as u64);
+    }
+
+    #[test]
+    fn stats_cover_nothing_of_a_tail_longer_than_the_budget() {
+        let dir = TestDir::new("stats-tail-budget");
+        dir.write(
+            "access.log",
+            (line(0, 0) + &"x".repeat(64 * 1024)).as_bytes(),
+        );
+        let limits = Limits {
+            read: 8 * 1024,
+            window: 1024,
+            ..UNLIMITED
+        };
+        let stats = stats_of(&dir, &all_time(), &limits);
+        assert_eq!(stats.stopped, Some(StopReason::ReadBudget));
+        assert_eq!(stats.covered, []);
     }
 
     #[test]
