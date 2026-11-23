@@ -42,8 +42,8 @@ Provides:
  librust-proxmox-apt-history-0+default-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+default-dev (= ${binary:Version}),
- librust-proxmox-apt-history-0.1.1-dev (= ${binary:Version}),
- librust-proxmox-apt-history-0.1.1+default-dev (= ${binary:Version})
+ librust-proxmox-apt-history-0.1.2-dev (= ${binary:Version}),
+ librust-proxmox-apt-history-0.1.2+default-dev (= ${binary:Version})
 Description: Parsers for the logs APT keeps about package changes - Rust source code
  Source code for Debianized Rust crate "proxmox-apt-history"
 
@@ -66,7 +66,7 @@ Depends:
 Provides:
  librust-proxmox-apt-history-0+api-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+api-dev (= ${binary:Version}),
- librust-proxmox-apt-history-0.1.1+api-dev (= ${binary:Version})
+ librust-proxmox-apt-history-0.1.2+api-dev (= ${binary:Version})
 Description: Parsers for the logs APT keeps about package changes - feature "api"
  This metapackage enables feature "api" for the Rust proxmox-apt-history crate,
  by pulling in any additional dependencies needed by that feature.
@@ -86,7 +86,7 @@ Depends:
 Provides:
  librust-proxmox-apt-history-0+api-types-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+api-types-dev (= ${binary:Version}),
- librust-proxmox-apt-history-0.1.1+api-types-dev (= ${binary:Version})
+ librust-proxmox-apt-history-0.1.2+api-types-dev (= ${binary:Version})
 Description: Parsers for the logs APT keeps about package changes - feature "api-types"
  This metapackage enables feature "api-types" for the Rust proxmox-apt-history
  crate, by pulling in any additional dependencies needed by that feature.
@@ -103,7 +103,7 @@ Depends:
 Provides:
  librust-proxmox-apt-history-0+impl-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+impl-dev (= ${binary:Version}),
- librust-proxmox-apt-history-0.1.1+impl-dev (= ${binary:Version})
+ librust-proxmox-apt-history-0.1.2+impl-dev (= ${binary:Version})
 Description: Parsers for the logs APT keeps about package changes - feature "impl"
  This metapackage enables feature "impl" for the Rust proxmox-apt-history crate,
  by pulling in any additional dependencies needed by that feature.

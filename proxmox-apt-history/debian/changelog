@@ -1,3 +1,14 @@
+rust-proxmox-apt-history (0.1.2-1) trixie; urgency=medium
+
+  * history: tell whether a transaction without end time is still running or
+    got interrupted. As APT runs one transaction at a time, only the newest
+    one can still be running, which it is if the process holding the lock of
+    the dpkg frontend started before it. If that cannot be told, like when
+    the same command runs again or without permission to check the lock, the
+    state stays open as before.
+
+ -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Nov 2026 03:46:43 +0100
+
 rust-proxmox-apt-history (0.1.1-1) trixie; urgency=medium
 
   * update changelogs: show that no changelog is available for packages of
