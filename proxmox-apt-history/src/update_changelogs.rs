@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -683,6 +683,9 @@ impl WorkDir {
         ));
         fs::DirBuilder::new().mode(0o711).create(&path)?;
         let work = Self { path };
+        // a restrictive umask, like in a hardened shell running the API CLI, would take away the
+        // search permission that the sandbox user of APT needs to reach its directory
+        fs::set_permissions(&work.path, fs::Permissions::from_mode(0o711))?;
         let tmp = work.tmp();
         fs::DirBuilder::new().mode(0o700).create(&tmp)?;
         if let Some(uid) = apt_sandbox_uid() {
