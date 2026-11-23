@@ -1,3 +1,42 @@
+rust-proxmox-apt-history (0.1.1-1) trixie; urgency=medium
+
+  * update changelogs: show that no changelog is available for packages of
+    repositories without a changelog location, like most third-party ones.
+    APT's message for these was not recognized, so a single such package made
+    each request resolve every package on its own, which could use up the
+    time limit with many pending updates. Such packages also showed as missing
+    from the package lists, and the daily prefetch counted them as failed.
+
+  * update changelogs: keep the cached changelogs if resolving their locations
+    failed, for example at the time limit, instead of emptying the cache. An
+    APT failure that is not about a package, like a broken list of sources,
+    now shows APT's error instead of asking to refresh the updates.
+
+  * update changelogs: write the time of the last request and the markers of
+    slow downloads atomically, so that a daily prefetch running at the same
+    time cannot take the cache as unused and empty it.
+
+  * api: answer failures to read the logs with a server error instead of a
+    client error.
+
+  * api: refuse more than four requests that read the logs at the same time
+    with a 503 error, as each can hold up to 128 MiB, instead of letting them
+    pile up.
+
+  * update changelogs: report the same failure in the summary of the daily
+    prefetch each time, if several packages failed.
+
+  * terminal output: ignore the parameters of underline colors instead of
+    taking them as styles of their own, which could, for example, make text
+    bold.
+
+  * update changelogs: set the permissions of the download directory
+    regardless of the umask. A restrictive one, like in a hardened shell, made
+    APT download to /tmp instead, where the size limit of a download does not
+    apply and stopped downloads leave their directories behind.
+
+ -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Nov 2026 01:37:59 +0100
+
 rust-proxmox-apt-history (0.1.0-1) trixie; urgency=medium
 
   * initial release of proxmox-apt-history, a crate for parsing the history

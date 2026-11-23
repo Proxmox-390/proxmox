@@ -1,7 +1,7 @@
 [package]
 name = "proxmox-apt-history"
 description = "Parsers for the logs APT keeps about package changes"
-version = "0.1.0"
+version = "0.1.1"
 
 authors.workspace = true
 edition.workspace = true
