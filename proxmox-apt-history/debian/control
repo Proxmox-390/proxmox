@@ -61,7 +61,8 @@ Depends:
  librust-proxmox-schema-5+api-types-dev (>= 5.7.0-~~),
  librust-serde-json-1+default-dev,
  librust-tokio-1+default-dev (>= 1.6-~~),
- librust-tokio-1+rt-dev (>= 1.6-~~)
+ librust-tokio-1+rt-dev (>= 1.6-~~),
+ librust-tokio-1+sync-dev (>= 1.6-~~)
 Provides:
  librust-proxmox-apt-history-0+api-dev (= ${binary:Version}),
  librust-proxmox-apt-history-0.1+api-dev (= ${binary:Version}),

@@ -30,7 +30,7 @@ proxmox-time.workspace = true
 
 anyhow = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["rt"] }
+tokio = { workspace = true, optional = true, features = ["rt", "sync"] }
 
 proxmox-http-error = { workspace = true, optional = true }
 proxmox-router = { workspace = true, optional = true }

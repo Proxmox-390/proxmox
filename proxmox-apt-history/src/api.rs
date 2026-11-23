@@ -6,12 +6,18 @@
 //! until then only the superuser has access.
 
 use anyhow::Error;
+use tokio::sync::Semaphore;
 
-use proxmox_http_error::http_err;
+use proxmox_http_error::{http_bail, http_err};
 use proxmox_schema::api;
 use proxmox_schema::api_types::NODE_SCHEMA;
 
 use crate::{HistoryEntry, HistoryListOptions, TermLogFormat, TransactionChangelog};
+
+/// How many requests read the logs at once. One can hold the terminal output of a transaction
+/// twice, raw and cleaned, which is limited to 64 MiB each.
+const MAX_READS: usize = 4;
+static READS: Semaphore = Semaphore::const_new(MAX_READS);
 
 #[api(
     // hardened systems can restrict access to the rotated APT logs or their directory
@@ -90,13 +96,31 @@ pub async fn get_term_log(
 }
 
 /// Runs reading the logs on a thread for blocking tasks, as it can take a while for big logs,
-/// which must not block the async runtime.
+/// which must not block the async runtime, or fails with 503 while too many run already, rather
+/// than queueing up.
 async fn blocking<T: Send + 'static>(
     read: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {
-    tokio::task::spawn_blocking(read)
-        .await
-        .map_err(|err| http_err!(INTERNAL_SERVER_ERROR, "reading the APT logs failed - {err}"))?
+    limited(&READS, read).await
+}
+
+async fn limited<T: Send + 'static>(
+    permits: &'static Semaphore,
+    read: impl FnOnce() -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error> {
+    let Ok(permit) = permits.try_acquire() else {
+        http_bail!(
+            SERVICE_UNAVAILABLE,
+            "too many requests to the APT history at once, try again later"
+        );
+    };
+    tokio::task::spawn_blocking(move || {
+        // a client that gives up does not stop the reading, which keeps the permit until it ends
+        let _permit = permit;
+        read()
+    })
+    .await
+    .map_err(|err| http_err!(INTERNAL_SERVER_ERROR, "reading the APT logs failed - {err}"))?
 }
 
 /// Failing to read the logs is an error of the server, not of the request.
@@ -167,6 +191,27 @@ mod tests {
             assert!(matches!(method.access.permission, Permission::Superuser));
             assert!(method.protected);
         }
+    }
+
+    #[test]
+    fn reads_beyond_the_limit_are_refused() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        // a semaphore of its own, as taking those of all requests could fail other tests
+        static PERMITS: Semaphore = Semaphore::const_new(MAX_READS);
+        let all = PERMITS.try_acquire_many(MAX_READS as u32).unwrap();
+        let refused = runtime.block_on(limited(&PERMITS, || -> Result<(), Error> {
+            panic!("a refused read must not run")
+        }));
+        let err = refused.unwrap_err();
+        let err = err.downcast_ref::<proxmox_http_error::HttpError>().unwrap();
+        assert_eq!(
+            err.code,
+            proxmox_http_error::StatusCode::SERVICE_UNAVAILABLE
+        );
+        drop(all);
+        runtime.block_on(limited(&PERMITS, || Ok(()))).unwrap();
     }
 
     #[test]
