@@ -5,7 +5,7 @@
 //! The products set the permissions with [`ApiMethod::access`](proxmox_router::ApiMethod::access),
 //! until then only the superuser has access.
 
-use anyhow::{Error, format_err};
+use anyhow::Error;
 
 use proxmox_http_error::http_err;
 use proxmox_schema::api;
@@ -37,7 +37,7 @@ use crate::{HistoryEntry, HistoryListOptions, TermLogFormat, TransactionChangelo
 )]
 /// List past APT transactions and their package changes, newest first.
 pub async fn list_history(options: HistoryListOptions) -> Result<Vec<HistoryEntry>, Error> {
-    blocking(move || Ok(crate::list_history(&options)?)).await
+    blocking(move || crate::list_history(&options).map_err(read_error)).await
 }
 
 #[api(
@@ -76,13 +76,15 @@ pub async fn get_term_log(
     let start_index = start_index.unwrap_or_default();
     let format = format.unwrap_or_default();
     blocking(move || {
-        crate::get_term_log(start_time, start_index, format)?.ok_or_else(|| {
-            http_err!(
-                NOT_FOUND,
-                "no terminal output found for the APT transaction started at {start_time} with \
+        crate::get_term_log(start_time, start_index, format)
+            .map_err(read_error)?
+            .ok_or_else(|| {
+                http_err!(
+                    NOT_FOUND,
+                    "no terminal output found for the APT transaction started at {start_time} with \
                 index {start_index}"
-            )
-        })
+                )
+            })
     })
     .await
 }
@@ -94,7 +96,12 @@ async fn blocking<T: Send + 'static>(
 ) -> Result<T, Error> {
     tokio::task::spawn_blocking(read)
         .await
-        .map_err(|err| format_err!("reading the APT logs failed - {err}"))?
+        .map_err(|err| http_err!(INTERNAL_SERVER_ERROR, "reading the APT logs failed - {err}"))?
+}
+
+/// Failing to read the logs is an error of the server, not of the request.
+fn read_error(err: crate::Error) -> Error {
+    http_err!(INTERNAL_SERVER_ERROR, "{err}")
 }
 
 #[api(
@@ -132,12 +139,14 @@ pub async fn get_transaction_changelogs(
 ) -> Result<Vec<TransactionChangelog>, Error> {
     let start_index = start_index.unwrap_or_default();
     blocking(move || {
-        crate::get_transaction_changelogs(start_time, start_index)?.ok_or_else(|| {
-            http_err!(
-                NOT_FOUND,
-                "no APT transaction found that started at {start_time} with index {start_index}"
-            )
-        })
+        crate::get_transaction_changelogs(start_time, start_index)
+            .map_err(read_error)?
+            .ok_or_else(|| {
+                http_err!(
+                    NOT_FOUND,
+                    "no APT transaction found that started at {start_time} with index {start_index}"
+                )
+            })
     })
     .await
 }
@@ -158,6 +167,18 @@ mod tests {
             assert!(matches!(method.access.permission, Permission::Superuser));
             assert!(method.protected);
         }
+    }
+
+    #[test]
+    fn unreadable_logs_are_server_errors() {
+        let err = read_error(crate::Error::Io(
+            std::io::ErrorKind::PermissionDenied.into(),
+        ));
+        let err = err.downcast_ref::<proxmox_http_error::HttpError>().unwrap();
+        assert_eq!(
+            err.code,
+            proxmox_http_error::StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     fn parse_query(method: &'static ApiMethod, query: &[(&str, &str)]) -> Result<(), String> {
