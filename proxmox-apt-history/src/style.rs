@@ -59,8 +59,9 @@ impl TextStyle {
                 2 => self.dim = true,
                 22 => (self.bold, self.dim) = (false, false),
                 code @ (30..=37 | 90..=97) => self.color = TextColor::from_offset(code % 10),
-                // extended colors, by palette index or as RGB values
-                code @ (38 | 48) => {
+                // extended colors of text, background and underline, by palette index or as RGB
+                // values
+                code @ (38 | 48 | 58) => {
                     if sub_params.is_empty() {
                         let skip = match params.next() {
                             Some("5") => 1,
@@ -173,6 +174,8 @@ mod tests {
         // the parameters of extended colors are no styles of their own
         assert_eq!(style("38;5;1"), TextStyle::default());
         assert_eq!(style("48;2;1;2;3;33").color, Some(TextColor::Yellow));
+        assert_eq!(style("58;5;1"), TextStyle::default());
+        assert_eq!(style("31;58;2;1;2;3").color, Some(TextColor::Red));
         assert_eq!(
             style("38:5:1;1"),
             TextStyle {
