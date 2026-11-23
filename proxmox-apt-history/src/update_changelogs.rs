@@ -289,7 +289,7 @@ struct Fetched {
 /// Resolves the changelog locations of the packages and takes the changelogs from the cache, or
 /// downloads them in rounds of limited size in which each file name occurs once, as APT names the
 /// downloads after the source package. Updates the cache to hold exactly the changelogs of these
-/// packages.
+/// packages, if the locations of all of them could be resolved.
 fn fetch_changelogs(
     packages: &[String],
     deadline: Instant,
@@ -302,6 +302,12 @@ fn fetch_changelogs(
     } else {
         resolve(packages)
     };
+    // after a failed resolution, like at the time limit, the cache may still hold the changelogs
+    // that the next request needs
+    let resolved = locations.iter().all(|location| match location {
+        Ok(_) => true,
+        Err(err) => err == NOT_IN_LISTS || err.starts_with(NOT_AVAILABLE),
+    });
     let mut jobs: Vec<Job> = Vec::new();
     let mut job_of = HashMap::new();
     for (package, location) in packages.iter().zip(locations) {
@@ -380,7 +386,9 @@ fn fetch_changelogs(
         retry.append(&mut rest);
         missing = retry;
     }
-    if let Some(cache) = cache {
+    if let Some(cache) = cache
+        && resolved
+    {
         cache.prune(&jobs.iter().map(|job| job.location.uri.as_str()).collect());
     }
     Fetched {
@@ -426,25 +434,36 @@ fn resolve_locations(packages: &[String], deadline: Instant) -> Vec<Result<Locat
                     std::slice::from_ref(package),
                     deadline,
                 )?;
-                match (
-                    output.status,
-                    associate_locations(
-                        std::slice::from_ref(package),
-                        &output.stdout,
-                        &output.stderr,
-                    ),
-                ) {
-                    (None, _) => Err(TIMED_OUT.to_string()),
-                    (Some(status), Some(mut locations))
-                        if status.success() || locations[0].is_err() =>
-                    {
-                        locations.remove(0)
-                    }
-                    _ => Err(NOT_IN_LISTS.to_string()),
-                }
+                resolved_location(package, &output)
             })
             .collect()
     })
+}
+
+/// The location of a package resolved on its own, or why there is none. Failures that name no
+/// package, like a broken APT configuration, are no definite answer about the package.
+fn resolved_location(package: &String, output: &Output) -> Result<Location, String> {
+    let associated = associate_locations(
+        std::slice::from_ref(package),
+        &output.stdout,
+        &output.stderr,
+    );
+    match (output.status, associated) {
+        (None, _) => Err(TIMED_OUT.to_string()),
+        (Some(status), Some(mut locations)) if status.success() || locations[0].is_err() => {
+            locations.remove(0)
+        }
+        _ => {
+            let error = output
+                .stderr
+                .lines()
+                .find_map(|line| line.strip_prefix("E: "));
+            Err(match error {
+                Some(error) => format!("Could not resolve the changelog location - {error}"),
+                None => "Could not resolve the changelog location".to_string(),
+            })
+        }
+    }
 }
 
 /// Associates the output of `apt-get changelog --print-uris` with the packages, if every package
@@ -1181,6 +1200,7 @@ fn has_exited(pid: libc::pid_t) -> io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::process::ExitStatusExt;
     use std::sync::Mutex;
 
     use super::*;
@@ -1647,6 +1667,81 @@ mod tests {
             assert_eq!(fetched.entries.len(), expected);
             assert!(fetched.entries[0].is_err());
         }
+    }
+
+    #[test]
+    fn only_failures_naming_the_package_are_definite() {
+        let package = "vendor-tool=1".to_string();
+        let output = |code: i32, stdout: &str, stderr: &str| Output {
+            status: Some(ExitStatus::from_raw(code << 8)),
+            stopped: false,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        };
+        let resolved = |output| resolved_location(&package, &output);
+        assert_eq!(
+            resolved(output(
+                0,
+                "'https://example.invalid/vendor-tool_1' vendor-tool.changelog\n",
+                ""
+            ))
+            .unwrap()
+            .file,
+            "vendor-tool.changelog"
+        );
+        assert_eq!(
+            resolved(output(100, "", "E: Unable to locate package vendor-tool\n")).unwrap_err(),
+            NOT_IN_LISTS
+        );
+        assert_eq!(
+            resolved(output(
+                100,
+                "",
+                "E: Changelog unavailable for vendor-tool=1\n"
+            ))
+            .unwrap_err(),
+            NOT_AVAILABLE
+        );
+        // as APT reports a broken list of sources
+        assert_eq!(
+            resolved(output(
+                100,
+                "",
+                "E: Malformed entry 1 in list file /etc/apt/sources.list.d/x.list (Component)\n\
+                 E: The list of sources could not be read.\n"
+            ))
+            .unwrap_err(),
+            "Could not resolve the changelog location - Malformed entry 1 in list file \
+             /etc/apt/sources.list.d/x.list (Component)"
+        );
+        assert_eq!(
+            resolved(output(0, "", "")).unwrap_err(),
+            "Could not resolve the changelog location"
+        );
+    }
+
+    #[test]
+    fn failed_resolution_keeps_the_cache() {
+        let dir = TestDir::new("unresolved");
+        let cache = Cache::open(&dir.0).unwrap();
+        assert!(cache.put(&location("foo").uri, &text("foo")));
+        let fetch = |resolved: Vec<Result<Location, String>>| {
+            fetch_changelogs(
+                &["foo=3".to_string()],
+                later(),
+                Some(&cache),
+                |_| resolved,
+                |_| panic!("nothing to download"),
+            )
+        };
+        fetch(vec![Err(NOT_STARTED.to_string())]);
+        assert!(cache.get(&location("foo").uri).is_some());
+        fetch(vec![Err(
+            "Could not resolve the changelog location".to_string()
+        )]);
+        assert!(cache.get(&location("foo").uri).is_some());
+        fetch(vec![Err(NOT_IN_LISTS.to_string())]);
+        assert!(cache.get(&location("foo").uri).is_none());
     }
 
     #[test]
