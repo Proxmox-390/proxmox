@@ -36,8 +36,8 @@ Provides:
  librust-proxmox-access-log-0+default-dev (= ${binary:Version}),
  librust-proxmox-access-log-0.1-dev (= ${binary:Version}),
  librust-proxmox-access-log-0.1+default-dev (= ${binary:Version}),
- librust-proxmox-access-log-0.1.0-dev (= ${binary:Version}),
- librust-proxmox-access-log-0.1.0+default-dev (= ${binary:Version})
+ librust-proxmox-access-log-0.1.1-dev (= ${binary:Version}),
+ librust-proxmox-access-log-0.1.1+default-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - Rust source code
  Source code for Debianized Rust crate "proxmox-access-log"
 
@@ -57,7 +57,7 @@ Depends:
 Provides:
  librust-proxmox-access-log-0+api-dev (= ${binary:Version}),
  librust-proxmox-access-log-0.1+api-dev (= ${binary:Version}),
- librust-proxmox-access-log-0.1.0+api-dev (= ${binary:Version})
+ librust-proxmox-access-log-0.1.1+api-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - feature "api"
  This metapackage enables feature "api" for the Rust proxmox-access-log crate,
  by pulling in any additional dependencies needed by that feature.
@@ -74,7 +74,7 @@ Depends:
 Provides:
  librust-proxmox-access-log-0+api-types-dev (= ${binary:Version}),
  librust-proxmox-access-log-0.1+api-types-dev (= ${binary:Version}),
- librust-proxmox-access-log-0.1.0+api-types-dev (= ${binary:Version})
+ librust-proxmox-access-log-0.1.1+api-types-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - feature "api-types"
  This metapackage enables feature "api-types" for the Rust proxmox-access-log
  crate, by pulling in any additional dependencies needed by that feature.
@@ -93,7 +93,7 @@ Depends:
 Provides:
  librust-proxmox-access-log-0+query-dev (= ${binary:Version}),
  librust-proxmox-access-log-0.1+query-dev (= ${binary:Version}),
- librust-proxmox-access-log-0.1.0+query-dev (= ${binary:Version})
+ librust-proxmox-access-log-0.1.1+query-dev (= ${binary:Version})
 Description: Parser for the API access logs of Proxmox products - feature "query"
  This metapackage enables feature "query" for the Rust proxmox-access-log crate,
  by pulling in any additional dependencies needed by that feature.

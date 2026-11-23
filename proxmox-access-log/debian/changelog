@@ -1,3 +1,27 @@
+rust-proxmox-access-log (0.1.1-1) trixie; urgency=medium
+
+  * filter: let the user filter match any user or API token that contains the
+    text, ignoring case, like the search does, so that for example 'root'
+    finds root@pam and its API tokens. An exact match still compares the whole
+    ID, and an empty user filter counts as no filter.
+
+  * report a compressed rotated copy as too large to read, if the first 32 MiB
+    of its data hold no complete line, like a copy starting with skippable
+    zstd frames. Such a copy could get skipped without reporting a gap, so a
+    query took the log as complete.
+
+  * statistics: count nothing as covered at an unterminated end of the log
+    that is longer than one call reads, as it holds no complete line.
+
+  * stop reading a compressed copy once the read budget of a call is used up,
+    so that a read error after that fails the call instead of counting as the
+    end of the budget.
+
+  * read the same copy each time, if a rotated copy exists both compressed
+    with gzip and with zstd, as after changing the compression.
+
+ -- Proxmox Support Team <support@proxmox.com>  Mon, 23 Nov 2026 01:37:30 +0100
+
 rust-proxmox-access-log (0.1.0-1) trixie; urgency=medium
 
   * initial version
