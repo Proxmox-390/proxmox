@@ -33,6 +33,8 @@ mod update_changelogs;
 pub use update_changelogs::{PrefetchSummary, get_update_changelogs, prefetch_update_changelogs};
 
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
+mod lock;
+#[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 mod logs;
 #[cfg(all(feature = "impl", not(target_arch = "wasm32")))]
 pub use logs::{get_term_log, list_history};

@@ -140,6 +140,15 @@ pub struct HistoryEntry {
     /// End time as Unix epoch, missing if the transaction is still running or got interrupted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_time: Option<i64>,
+    /// Whether a transaction without end time is still running, or else got interrupted. As APT
+    /// runs one transaction at a time, only the newest one can still be running. Missing if that
+    /// could not be checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "api-types",
+        serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")
+    )]
+    pub running: Option<bool>,
     /// Command line of the APT invocation, missing for frontends using APT as library.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command_line: Option<String>,
@@ -357,6 +366,7 @@ mod tests {
             start_time: 0,
             start_index: 0,
             end_time: None,
+            running: None,
             command_line: None,
             requested_by: None,
             requested_by_uid: None,
