@@ -134,7 +134,10 @@ fn prefetch(
         downloaded: fetched.stored,
         ..Default::default()
     };
-    let errors = fetched.job_of.values().filter_map(|job| job.as_ref().err());
+    // in the order of the packages, so that the same failure gets reported each time
+    let errors = packages
+        .iter()
+        .filter_map(|package| fetched.job_of.get(package)?.as_ref().err());
     let errors = errors.chain(
         fetched
             .entries
@@ -1826,6 +1829,27 @@ mod tests {
                 error: Some("Changelog download failed (HTTP 401)".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn prefetch_reports_the_first_failure() {
+        let dir = TestDir::new("first-failure");
+        let cache = Cache::open(&dir.0).unwrap();
+        let names = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh"];
+        let summary = prefetch(
+            names.iter().map(|name| change(name, Some("1"))).collect(),
+            later(),
+            &cache,
+            |packages| {
+                packages
+                    .iter()
+                    .map(|package| Err(format!("failed {package}")))
+                    .collect()
+            },
+            |_| panic!("nothing to download"),
+        );
+        assert_eq!(summary.failed, names.len());
+        assert_eq!(summary.error.as_deref(), Some("failed aa=3"));
     }
 
     #[test]
