@@ -937,30 +937,41 @@ impl Cache {
     /// syncing, as a damaged entry fails to decompress and gets downloaded again as well. Returns
     /// whether it got stored.
     fn put(&self, uri: &str, text: &str) -> bool {
+        let stored = self.replace(&Self::name(uri), |file| {
+            let mut encoder = GzEncoder::new(file, Compression::default());
+            encoder.write_all(uri.as_bytes())?;
+            encoder.write_all(b"\n")?;
+            encoder.write_all(text.as_bytes())?;
+            encoder.finish().map(drop)
+        });
+        if stored.is_ok() {
+            self.remove(&Self::marker(uri));
+        }
+        stored.is_ok()
+    }
+
+    /// Replaces the file with what `write` writes to a new one, so that a request or prefetch
+    /// running at the same time reads either the old or the new content, never a partial one.
+    fn replace(
+        &self,
+        name: &str,
+        write: impl FnOnce(fs::File) -> io::Result<()>,
+    ) -> io::Result<()> {
         static COUNT: AtomicUsize = AtomicUsize::new(0);
-        let name = Self::name(uri);
         let tmp = format!(
             ".{name}.{}.{}.tmp",
             std::process::id(),
             COUNT.fetch_add(1, Ordering::Relaxed),
         );
         let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
-        let stored = self
+        let result = self
             .open_file(&tmp, flags)
-            .and_then(|file| {
-                let mut encoder = GzEncoder::new(file, Compression::default());
-                encoder.write_all(uri.as_bytes())?;
-                encoder.write_all(b"\n")?;
-                encoder.write_all(text.as_bytes())?;
-                encoder.finish().map(drop)
-            })
-            .and_then(|()| self.rename(&tmp, &name));
-        if stored.is_ok() {
-            self.remove(&Self::marker(uri));
-        } else {
+            .and_then(write)
+            .and_then(|()| self.rename(&tmp, name));
+        if result.is_err() {
             self.remove(&tmp);
         }
-        stored.is_ok()
+        result
     }
 
     /// Remembers when the download of the changelog did not finish in time, so that the next
@@ -970,10 +981,7 @@ impl Cache {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC;
-        if let Ok(mut file) = self.open_file(&Self::marker(uri), flags) {
-            let _ = writeln!(file, "{now}");
-        }
+        let _ = self.replace(&Self::marker(uri), |mut file| writeln!(file, "{now}"));
     }
 
     /// When the download of the changelog last did not finish in time, if it did not yet finish
@@ -1017,11 +1025,7 @@ impl Cache {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        if let Ok(mut file) =
-            self.open_file("last-use", libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC)
-        {
-            let _ = writeln!(file, "{now}");
-        }
+        let _ = self.replace("last-use", |mut file| writeln!(file, "{now}"));
     }
 
     /// Whether the cache got used in the last 30 days, by the time it records as text, so that its
@@ -1202,6 +1206,7 @@ fn has_exited(pid: libc::pid_t) -> io::Result<bool> {
 mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicBool;
 
     use super::*;
 
@@ -1742,6 +1747,29 @@ mod tests {
         assert!(cache.get(&location("foo").uri).is_some());
         fetch(vec![Err(NOT_IN_LISTS.to_string())]);
         assert!(cache.get(&location("foo").uri).is_none());
+    }
+
+    #[test]
+    fn markers_are_never_read_half_written() {
+        let dir = TestDir::new("markers");
+        let cache = Cache::open(&dir.0).unwrap();
+        let uri = location("slow").uri;
+        cache.mark_used();
+        cache.mark_slow(&uri);
+        let done = AtomicBool::new(false);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..2000 {
+                    cache.mark_used();
+                    cache.mark_slow(&uri);
+                }
+                done.store(true, Ordering::Relaxed);
+            });
+            while !done.load(Ordering::Relaxed) {
+                assert!(cache.used_recently());
+                assert_ne!(cache.slow_since(&uri), Some(0));
+            }
+        });
     }
 
     #[test]
