@@ -1846,6 +1846,10 @@ serde_plain::derive_fromstr_from_deserialize!(ClusterNodeIndexResponseStatus);
 
 #[api(
     properties: {
+        "cluster-id": {
+            optional: true,
+            type: String,
+        },
         id: {
             type: String,
             description: "FIXME: Missing description in PVE.",
@@ -1894,6 +1898,12 @@ serde_plain::derive_fromstr_from_deserialize!(ClusterNodeIndexResponseStatus);
 /// Object.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct ClusterNodeStatus {
+    /// [cluster] Random identifier of the cluster. A standalone node reports
+    /// its own identifier on its node entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "cluster-id")]
+    pub cluster_id: Option<String>,
+
     pub id: String,
 
     /// [node] IP of the resolved nodename.

@@ -20683,6 +20683,11 @@
                      "returns": {
                         "items": {
                            "properties": {
+                              "cluster-id": {
+                                 "description": "[cluster] Random identifier of the cluster. A standalone node reports its own identifier on its node entry.",
+                                 "optional": 1,
+                                 "type": "string"
+                              },
                               "id": {
                                  "type": "string"
                               },
