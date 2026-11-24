@@ -16,7 +16,7 @@ use proxmox_sys::fs::atomic_open_or_create_file;
 const RRD_JOURNAL_NAME: &str = "rrd.journal";
 
 use crate::cache::{CacheConfig, validate_rrd_path};
-use crate::rrd::DataSourceType;
+use crate::rrd::{DataSourceType, is_valid_update_time};
 
 // shared state behind RwLock
 pub struct JournalState {
@@ -48,6 +48,9 @@ impl FromStr for JournalEntry {
         let time: f64 = parts[0]
             .parse()
             .map_err(|_| format_err!("unable to parse time"))?;
+        if !is_valid_update_time(time) {
+            bail!("invalid time {time}");
+        }
         let value: f64 = parts[1]
             .parse()
             .map_err(|_| format_err!("unable to parse value"))?;
@@ -323,6 +326,14 @@ mod tests {
         let result = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(result, expected, "{name}");
+    }
+
+    #[test]
+    fn reject_invalid_journal_times() {
+        for time in ["1789798801789877000", "NaN", "inf", "-1"] {
+            let line = format!("{time}:1:0:host/cpu\n");
+            assert!(line.parse::<JournalEntry>().is_err(), "{time}");
+        }
     }
 
     #[test]

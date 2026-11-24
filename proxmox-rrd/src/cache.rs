@@ -13,7 +13,7 @@ use crossbeam_channel::{TryRecvError, bounded};
 use proxmox_sys::fs::{CreateOptions, create_path};
 
 use crate::Entry;
-use crate::rrd::{AggregationFn, DataSourceType, Database};
+use crate::rrd::{AggregationFn, DataSourceType, Database, is_valid_update_time};
 
 mod journal;
 use journal::*;
@@ -223,6 +223,9 @@ impl Cache {
         new_only: bool,
     ) -> Result<(), Error> {
         validate_rrd_path(rel_path)?;
+        if !is_valid_update_time(time) {
+            bail!("invalid update time {time}");
+        }
 
         self.apply_journal()?;
 

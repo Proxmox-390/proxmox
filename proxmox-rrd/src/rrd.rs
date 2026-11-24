@@ -25,6 +25,14 @@ use proxmox_sys::fs::{CreateOptions, make_tmp_file};
 // openssl::sha::sha256(b"Proxmox Round Robin Database file v2.0")[0..8];
 pub const PROXMOX_RRD_MAGIC_2_0: [u8; 8] = [224, 200, 228, 27, 239, 112, 122, 159];
 
+/// Update times after 2200-01-01 are treated as corrupt. For example, an incomplete journal entry
+/// merged with the next one yields a timestamp with at least 11 integer digits.
+const MAX_UPDATE_TIME: f64 = 7_258_118_400.0;
+
+pub(crate) fn is_valid_update_time(time: f64) -> bool {
+    (0.0..=MAX_UPDATE_TIME).contains(&time)
+}
+
 #[api()]
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -119,8 +127,8 @@ impl DataSource {
     }
 
     fn compute_new_value(&mut self, time: f64, mut value: f64) -> Result<f64, Error> {
-        if time < 0.0 {
-            bail!("got negative time");
+        if !is_valid_update_time(time) {
+            bail!("got invalid time {time}");
         }
         if time <= self.last_update {
             bail!("time in past ({} < {})", time, self.last_update);
@@ -376,8 +384,11 @@ impl Database {
             _ => bail!("not an rrd file - unknown magic number"),
         };
 
-        if rrd.source.last_update < 0.0 {
-            bail!("rrd file has negative last_update time");
+        if !is_valid_update_time(rrd.source.last_update) {
+            bail!(
+                "rrd file has invalid last_update time {}",
+                rrd.source.last_update
+            );
         }
 
         Ok(rrd)
@@ -691,6 +702,24 @@ mod tests {
         assert_eq!(start, 100 * 30);
         assert_eq!(resolution, 60);
         assert_eq!(data, []);
+
+        Ok(())
+    }
+
+    #[test]
+    fn reject_invalid_update_times() -> Result<(), Error> {
+        let rra = Archive::new(AggregationFn::Last, 60, 5);
+        let mut rrd = Database::new(DataSourceType::Gauge, vec![rra]);
+        rrd.update(1000.0, 1.0);
+        for time in [1789798801789877000.0, f64::INFINITY, f64::NAN, -1.0] {
+            assert!(rrd.try_update(time, 2.0).is_err(), "{time}");
+        }
+        assert_eq!(rrd.last_update(), 1000.0);
+
+        rrd.source.last_update = 1789798801789877000.0;
+        let mut raw = PROXMOX_RRD_MAGIC_2_0.to_vec();
+        serde_cbor::to_writer(&mut raw, &rrd)?;
+        assert!(Database::from_raw(&raw).is_err());
 
         Ok(())
     }

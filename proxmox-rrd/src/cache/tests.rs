@@ -88,6 +88,29 @@ fn reject_invalid_metric_paths() {
 }
 
 #[test]
+fn reject_invalid_update_times() {
+    let dir = TestDir::new();
+    let cache = new_cache(&dir.0);
+    for time in [1789798801789877000.0, f64::INFINITY, f64::NAN, -1.0] {
+        assert!(
+            cache
+                .update_value("host/cpu", time, 1.0, DataSourceType::Gauge)
+                .is_err(),
+            "{time}"
+        );
+        assert!(
+            cache
+                .update_value_ignore_old("host/cpu", time, 1.0, DataSourceType::Gauge)
+                .is_err(),
+            "{time}"
+        );
+    }
+    let state = cache.state.read().unwrap();
+    assert!(state.apply_thread_result.is_none());
+    assert_eq!(state.open_journal_reader().unwrap().lines().count(), 0);
+}
+
+#[test]
 fn replay_skips_invalid_paths() {
     let dir = TestDir::new();
     let outside = TestDir::new();
