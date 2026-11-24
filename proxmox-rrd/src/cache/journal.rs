@@ -6,6 +6,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Error, bail, format_err};
 use crossbeam_channel::Receiver;
@@ -22,7 +23,7 @@ use crate::rrd::{DataSourceType, is_valid_update_time};
 pub struct JournalState {
     config: Arc<CacheConfig>,
     journal: File,
-    pub last_journal_flush: f64,
+    pub last_journal_flush: Instant,
     pub journal_applied: bool,
     pub apply_thread_result: Option<Receiver<Result<(), String>>>,
 }
@@ -92,7 +93,7 @@ impl JournalState {
         Ok(Self {
             config,
             journal,
-            last_journal_flush: 0.0,
+            last_journal_flush: Instant::now(),
             journal_applied: false,
             apply_thread_result: None,
         })

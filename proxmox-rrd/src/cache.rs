@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread::spawn;
-use std::time::SystemTime;
+use std::time::Instant;
 
 use anyhow::{Error, bail, format_err};
 use crossbeam_channel::{TryRecvError, bounded};
@@ -168,14 +168,14 @@ impl Cache {
             }
         }
 
-        let now = proxmox_time::epoch_f64();
-        let wants_commit = (now - state_guard.last_journal_flush) > self.config.apply_interval;
+        let wants_commit =
+            state_guard.last_journal_flush.elapsed().as_secs_f64() > self.config.apply_interval;
 
         if journal_applied && !wants_commit {
             return Ok(journal_applied);
         }
 
-        state_guard.last_journal_flush = proxmox_time::epoch_f64();
+        state_guard.last_journal_flush = Instant::now();
 
         let (sender, receiver) = bounded(1);
         state_guard.apply_thread_result = Some(receiver);
@@ -315,24 +315,24 @@ fn apply_and_commit_journal_thread(
     if commit_only {
         state.write().unwrap().rotate_journal()?; // start new journal, keep old one
     } else {
-        let start_time = SystemTime::now();
+        let start_time = Instant::now();
         log::debug!("applying rrd journal");
 
         match apply_journal_impl(Arc::clone(&state), Arc::clone(&rrd_map)) {
             Ok(entries) => {
-                let elapsed = start_time.elapsed().unwrap().as_secs_f64();
+                let elapsed = start_time.elapsed().as_secs_f64();
                 log::info!("applied rrd journal ({entries} entries in {elapsed:.3} seconds)");
             }
             Err(err) => bail!("apply rrd journal failed - {err}"),
         }
     }
 
-    let start_time = SystemTime::now();
+    let start_time = Instant::now();
     log::debug!("commit rrd journal");
 
     match commit_journal_impl(config, state, rrd_map) {
         Ok(rrd_file_count) => {
-            let elapsed = start_time.elapsed().unwrap().as_secs_f64();
+            let elapsed = start_time.elapsed().as_secs_f64();
             log::info!(
                 "rrd journal successfully committed ({rrd_file_count} files in {elapsed:.3} seconds)"
             );
