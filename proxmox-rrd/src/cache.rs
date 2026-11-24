@@ -342,6 +342,7 @@ fn apply_journal_lines(
     lock_read_line: bool,
 ) -> Result<usize, Error> {
     let mut linenr = 0;
+    let mut entries = 0;
 
     loop {
         linenr += 1;
@@ -377,8 +378,9 @@ fn apply_journal_lines(
             entry.dst,
             true,
         )?;
+        entries += 1;
     }
-    Ok(linenr)
+    Ok(entries)
 }
 
 fn apply_journal_impl(
