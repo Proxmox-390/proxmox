@@ -365,6 +365,9 @@ pub struct CephFlagInfo {
 /// Flag name.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum CephFlagInfoName {
+    #[serde(rename = "noautoscale")]
+    /// noautoscale.
+    Noautoscale,
     #[serde(rename = "nobackfill")]
     /// nobackfill.
     Nobackfill,
@@ -20812,6 +20815,10 @@ pub struct SdnZonePending {
 
 #[api(
     properties: {
+        noautoscale: {
+            default: false,
+            optional: true,
+        },
         nobackfill: {
             default: false,
             optional: true,
@@ -20861,6 +20868,11 @@ pub struct SdnZonePending {
 /// Object.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct SetCephFlags {
+    /// The PG autoscaler does not change the number of PGs of any pool.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noautoscale: Option<bool>,
+
     /// Backfilling of PGs is suspended.
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]

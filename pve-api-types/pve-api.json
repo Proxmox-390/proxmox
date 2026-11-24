@@ -10303,6 +10303,7 @@
                                        "flag": {
                                           "description": "The name of the flag name to get.",
                                           "enum": [
+                                             "noautoscale",
                                              "nobackfill",
                                              "nodeep-scrub",
                                              "nodown",
@@ -10429,6 +10430,11 @@
                            "parameters": {
                               "additionalProperties": 0,
                               "properties": {
+                                 "noautoscale": {
+                                    "description": "The PG autoscaler does not change the number of PGs of any pool.",
+                                    "optional": 1,
+                                    "type": "boolean"
+                                 },
                                  "nobackfill": {
                                     "description": "Backfilling of PGs is suspended.",
                                     "optional": 1,
