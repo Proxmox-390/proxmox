@@ -12,7 +12,7 @@
 //! * Arbitrary number of RRAs (dynamically changeable)
 
 use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 use anyhow::{Error, bail, format_err};
@@ -447,8 +447,7 @@ impl Database {
         options: CreateOptions,
         avoid_page_cache: bool,
     ) -> Result<(), Error> {
-        let (fd, tmp_path) = make_tmp_file(path, options)?;
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd.into_raw_fd()) };
+        let (mut file, tmp_path) = make_tmp_file(path, options)?;
 
         let mut try_block = || -> Result<(), Error> {
             let mut data: Vec<u8> = Vec::new();
