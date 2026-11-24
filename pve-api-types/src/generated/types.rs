@@ -21416,6 +21416,9 @@ pub enum StorageContent {
     #[serde(rename = "backup")]
     /// backup.
     Backup,
+    #[serde(rename = "ct-vol")]
+    /// ct-vol.
+    CtVol,
     #[serde(rename = "images")]
     /// images.
     Images,
@@ -21434,6 +21437,12 @@ pub enum StorageContent {
     #[serde(rename = "snippets")]
     /// snippets.
     Snippets,
+    #[serde(rename = "vm-state")]
+    /// vm-state.
+    VmState,
+    #[serde(rename = "vm-vol")]
+    /// vm-vol.
+    VmVol,
     #[serde(rename = "vztmpl")]
     /// vztmpl.
     Vztmpl,

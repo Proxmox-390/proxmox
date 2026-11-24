@@ -62712,12 +62712,15 @@
    ],
    "storage-content-types": [
       "backup",
+      "ct-vol",
       "images",
       "import",
       "iso",
       "none",
       "rootdir",
       "snippets",
+      "vm-state",
+      "vm-vol",
       "vztmpl"
    ]
 }
