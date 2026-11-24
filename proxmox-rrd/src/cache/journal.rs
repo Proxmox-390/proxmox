@@ -163,9 +163,18 @@ impl JournalState {
         };
         let mut new_name = journal_path.clone();
         new_name.set_extension(format!("journal-{time:08x}"));
-        std::fs::rename(journal_path, &new_name)?;
+        std::fs::rename(&journal_path, &new_name)?;
 
-        self.journal = Self::open_journal_writer(&self.config)?;
+        self.journal = match Self::open_journal_writer(&self.config) {
+            Ok(journal) => journal,
+            Err(err) => {
+                // keep appending to the old journal under the name later rotations expect
+                if let Err(rename_err) = std::fs::rename(&new_name, &journal_path) {
+                    log::error!("unable to restore rrd journal {new_name:?} - {rename_err}");
+                }
+                return Err(err);
+            }
+        };
 
         // make sure the old journal data landed on the disk
         super::fsync_file_and_parent(&new_name)?;
