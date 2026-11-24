@@ -313,6 +313,9 @@ impl Archive {
     /// Extract data from `start` to `end`. The RRA itself does not
     /// store the `last_update` time, so you need to pass this a
     /// parameter (see [DataSource]).
+    ///
+    /// The result starts at the slot containing `start` and holds at most as many slots as the
+    /// archive. If the range has more slots, the part that overlaps the archive most is returned.
     pub fn extract_data(&self, start: u64, end: u64, last_update: f64) -> Entry {
         let last_update = last_update as u64;
         let reso = self.resolution;
@@ -322,6 +325,18 @@ impl Archive {
 
         let rrd_end = self.slot_end_time(last_update);
         let rrd_start = rrd_end.saturating_sub(reso * num_entries);
+
+        if start > end {
+            return Entry::new(self.slot_start_time(start), reso, list);
+        }
+
+        let mut start = self.slot_start_time(start);
+        let last_start = self
+            .slot_start_time(end)
+            .saturating_sub(reso * num_entries.saturating_sub(1));
+        if last_start > start {
+            start = rrd_start.clamp(start, last_start);
+        }
 
         let mut t = start;
         let mut index = self.slot(t);
@@ -702,6 +717,35 @@ mod tests {
         assert_eq!(start, 100 * 30);
         assert_eq!(resolution, 60);
         assert_eq!(data, []);
+
+        Ok(())
+    }
+
+    #[test]
+    fn extract_newest_slots() -> Result<(), Error> {
+        let rra = Archive::new(AggregationFn::Last, 60, 5);
+        let mut rrd = Database::new(DataSourceType::Gauge, vec![rra]);
+        for i in 10..20 {
+            rrd.update((i * 60 + 1) as f64, i as f64);
+        }
+        let end = 19 * 60 + 10;
+
+        // range with more slots than the archive
+        let entry = rrd.extract_data(AggregationFn::Last, 60, Some(end - 6 * 60), Some(end))?;
+        assert_eq!(entry.start, 15 * 60);
+        assert_eq!(
+            entry.data,
+            [Some(15.0), Some(16.0), Some(17.0), Some(18.0), Some(19.0)]
+        );
+
+        // start within a slot
+        let entry = rrd.extract_data(AggregationFn::Last, 60, Some(end - 190), Some(end))?;
+        assert_eq!(entry.start, 16 * 60);
+        assert_eq!(entry.data, [Some(16.0), Some(17.0), Some(18.0), Some(19.0)]);
+
+        // end before start within the same slot
+        let entry = rrd.extract_data(AggregationFn::Last, 60, Some(end), Some(end - 1))?;
+        assert!(entry.data.is_empty());
 
         Ok(())
     }
