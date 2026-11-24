@@ -45,6 +45,7 @@ impl RRDMap {
         } else {
             let mut path = self.config.basedir.clone();
             path.push(rel_path);
+            self.check_path_clash(rel_path, &path)?;
             let mut rrd = match (self.load_rrd_cb)(&path, rel_path) {
                 None => {
                     create_path(
@@ -60,6 +61,21 @@ impl RRDMap {
 
             update_rrd(&mut rrd, rel_path, time, value, new_only);
             self.map.insert(rel_path.to_string(), rrd);
+        }
+        Ok(())
+    }
+
+    /// A metric file cannot be a directory of another metric, saving one of them would fail on
+    /// every commit.
+    fn check_path_clash(&self, rel_path: &str, path: &Path) -> Result<(), Error> {
+        for (pos, _) in rel_path.match_indices('/') {
+            let parent = &rel_path[..pos];
+            if self.map.contains_key(parent) {
+                bail!("metric path {rel_path:?} clashes with metric {parent:?}");
+            }
+        }
+        if path.is_dir() {
+            bail!("metric path {rel_path:?} is a directory");
         }
         Ok(())
     }

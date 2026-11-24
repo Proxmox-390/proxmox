@@ -187,6 +187,27 @@ fn valid_metric_paths_round_trip() {
 }
 
 #[test]
+fn reject_clashing_metric_paths() {
+    let dir = TestDir::new();
+    let cache = new_cache(&dir.0);
+    apply_journal_impl(Arc::clone(&cache.state), Arc::clone(&cache.rrd_map)).unwrap();
+
+    let update = |path| cache.update_value(path, 100.0, 1.0, DataSourceType::Gauge);
+    update("host/cpu").unwrap();
+    assert!(update("host/cpu/core0").is_err());
+    update("pve/node/cpu").unwrap();
+    assert!(update("pve/node").is_err());
+
+    apply_and_commit_journal_thread(
+        Arc::clone(&cache.config),
+        Arc::clone(&cache.state),
+        Arc::clone(&cache.rrd_map),
+        true,
+    )
+    .unwrap();
+}
+
+#[test]
 fn update_blocks_rotation_until_applied_to_map() {
     use std::sync::Mutex;
     use std::time::Duration;
