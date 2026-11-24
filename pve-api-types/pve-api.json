@@ -233,6 +233,7 @@
          "attestation": {
             "default": 1,
             "description": "Enable TDX attestation by including quote-generation-socket",
+            "optional": 1,
             "type": "boolean"
          },
          "type": {

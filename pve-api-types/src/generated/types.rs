@@ -12162,6 +12162,7 @@ serde_plain::derive_fromstr_from_deserialize!(PveQemuSevFmtType);
     properties: {
         attestation: {
             default: true,
+            optional: true,
         },
         type: {
             type: PveQemuTdxFmtType,
@@ -12185,7 +12186,8 @@ serde_plain::derive_fromstr_from_deserialize!(PveQemuSevFmtType);
 pub struct PveQemuTdxFmt {
     /// Enable TDX attestation by including quote-generation-socket
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
-    pub attestation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<bool>,
 
     #[serde(rename = "type")]
     pub ty: PveQemuTdxFmtType,
