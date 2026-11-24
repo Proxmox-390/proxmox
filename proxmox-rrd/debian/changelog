@@ -1,3 +1,45 @@
+rust-proxmox-rrd (1.0.4-1) trixie; urgency=medium
+
+  * cache: include the metric path when logging a failed update.
+
+  * recover RRD files with a last update time far in the future, which the
+    journal corruption fixed in 1.0.3 could leave behind. These files
+    rejected every new value and their graphs stayed empty. Loading such a
+    file now fails, so Proxmox Backup Server and Proxmox Datacenter Manager
+    recreate it. No data is lost, as the stored values were already cleared.
+    Updates with a time before 1970 or after 2200 now fail too.
+
+  * include the newest data when extracting a time range. The yearly graphs
+    missed the most recent five days. The decade graphs missed the current
+    week on most days, and the daily and monthly graphs missed the current
+    data point. The returned start time is now always aligned to the archive
+    resolution.
+
+  * cache: fix cases where the RRD files were no longer saved, or where old
+    journal files piled up because they were never removed. Remotes could
+    trigger some of these through the metric names they report to Proxmox
+    Datacenter Manager:
+    - skip journal entries that cannot be applied during replay, for
+      example ones with invalid UTF-8, instead of retrying the whole replay
+      on every update.
+    - reject metric paths that clash with the file or directory of another
+      metric.
+    - reject metric file names longer than 244 bytes, which could never be
+      saved.
+    - restore the journal if opening a new one fails during rotation, for
+      example on a full file system.
+
+  * cache: measure the time between journal commits with a monotonic clock.
+    Setting the system clock back, for example through NTP, could delay
+    saving the RRD files.
+
+  * journal: do not lose pending updates on journal rotation. A rotation in
+    the same second as an earlier one, for example after a quick restart,
+    overwrote the older journal file. After the system clock was set back,
+    a replay could skip the updates of an older journal file as outdated.
+
+ -- Proxmox Support Team <support@proxmox.com>  Tue, 24 Nov 2026 15:18:02 +0100
+
 rust-proxmox-rrd (1.0.3-1) trixie; urgency=medium
 
   * journal: discard incomplete trailing entries before appending after
