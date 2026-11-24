@@ -30,7 +30,8 @@ mod tests;
 /// access from other processes).
 ///
 /// Metric paths must be relative paths with nonempty components other than `.` and `..`, without
-/// control characters. The top-level names `rrd.journal` and `rrd.journal-*` are reserved for journals.
+/// control characters. The last component can have at most 244 bytes. The top-level names
+/// `rrd.journal` and `rrd.journal-*` are reserved for journals.
 pub struct Cache {
     config: Arc<CacheConfig>,
     state: Arc<RwLock<JournalState>>,
@@ -281,6 +282,9 @@ impl Cache {
     }
 }
 
+/// Saving an RRD writes a temporary file with the suffix `.tmp_XXXXXX`, which must fit NAME_MAX.
+const MAX_FILE_NAME_LEN: usize = 255 - ".tmp_XXXXXX".len();
+
 fn validate_rrd_path(rel_path: &str) -> Result<(), Error> {
     if rel_path.chars().any(char::is_control)
         || rel_path
@@ -293,6 +297,10 @@ fn validate_rrd_path(rel_path: &str) -> Result<(), Error> {
     let first = rel_path.split('/').next().unwrap();
     if first == "rrd.journal" || first.starts_with("rrd.journal-") {
         bail!("reserved RRD path: {rel_path:?}");
+    }
+
+    if rel_path.rsplit('/').next().unwrap().len() > MAX_FILE_NAME_LEN {
+        bail!("RRD file name too long: {rel_path:?}");
     }
 
     Ok(())

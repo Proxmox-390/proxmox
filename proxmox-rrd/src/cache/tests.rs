@@ -208,6 +208,33 @@ fn reject_clashing_metric_paths() {
 }
 
 #[test]
+fn metric_file_name_length() {
+    let dir = TestDir::new();
+    let cache = new_cache(&dir.0);
+    apply_journal_impl(Arc::clone(&cache.state), Arc::clone(&cache.rrd_map)).unwrap();
+
+    let update = |path: &str| cache.update_value(path, 100.0, 1.0, DataSourceType::Gauge);
+    let name = "x".repeat(244);
+    update(&format!("host/{name}")).unwrap();
+    update(&format!("{name}x/cpu")).unwrap();
+    assert!(update(&format!("host/{name}x")).is_err());
+    assert!(
+        format!("100:1:0:host/{name}x\n")
+            .parse::<JournalEntry>()
+            .is_err()
+    );
+
+    apply_and_commit_journal_thread(
+        Arc::clone(&cache.config),
+        Arc::clone(&cache.state),
+        Arc::clone(&cache.rrd_map),
+        true,
+    )
+    .unwrap();
+    assert!(dir.0.join("host").join(&name).is_file());
+}
+
+#[test]
 fn update_blocks_rotation_until_applied_to_map() {
     use std::sync::Mutex;
     use std::time::Duration;
