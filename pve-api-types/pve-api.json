@@ -24238,6 +24238,7 @@
                                                    "backup",
                                                    "clone",
                                                    "create",
+                                                   "import",
                                                    "migrate",
                                                    "rollback",
                                                    "snapshot",

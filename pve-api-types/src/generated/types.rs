@@ -15161,6 +15161,9 @@ pub enum QemuConfigLock {
     #[serde(rename = "create")]
     /// create.
     Create,
+    #[serde(rename = "import")]
+    /// import.
+    Import,
     #[serde(rename = "migrate")]
     /// migrate.
     Migrate,
