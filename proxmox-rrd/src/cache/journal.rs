@@ -155,9 +155,14 @@ impl JournalState {
         let mut journal_path = self.config.basedir.clone();
         journal_path.push(RRD_JOURNAL_NAME);
 
+        // replay goes by the time in the name, keep it after all existing journals
+        let now = proxmox_time::epoch_i64().max(0) as u64;
+        let time = match self.list_old_journals()?.last() {
+            Some(newest) => now.max(newest.time.saturating_add(1)),
+            None => now,
+        };
         let mut new_name = journal_path.clone();
-        let now = proxmox_time::epoch_i64();
-        new_name.set_extension(format!("journal-{now:08x}"));
+        new_name.set_extension(format!("journal-{time:08x}"));
         std::fs::rename(journal_path, &new_name)?;
 
         self.journal = Self::open_journal_writer(&self.config)?;
@@ -327,6 +332,37 @@ mod tests {
         let result = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(result, expected, "{name}");
+    }
+
+    #[test]
+    fn rotate_keeps_existing_journals() {
+        let dir = TestDir::new();
+        let config = Arc::new(CacheConfig {
+            basedir: dir.0.clone(),
+            apply_interval: 1800.0,
+            file_options: CreateOptions::new(),
+            dir_options: CreateOptions::new(),
+        });
+        let mut state = JournalState::new(config).unwrap();
+        // one journal from the current second, one from before the clock stepped back
+        let now = proxmox_time::epoch_i64();
+        for time in [now, now + 1000] {
+            std::fs::write(dir.0.join(format!("rrd.journal-{time:08x}")), b"old\n").unwrap();
+        }
+        state
+            .append_journal_entry(100.0, 1.0, DataSourceType::Gauge, "host/cpu")
+            .unwrap();
+        state.rotate_journal().unwrap();
+
+        let journals = state.list_old_journals().unwrap();
+        assert_eq!(journals.len(), 3);
+        for journal in &journals[..2] {
+            assert_eq!(std::fs::read(&journal.path).unwrap(), b"old\n");
+        }
+        assert_eq!(
+            std::fs::read(&journals[2].path).unwrap(),
+            b"100:1:0:host/cpu\n"
+        );
     }
 
     #[test]
