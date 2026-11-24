@@ -3150,6 +3150,12 @@ fn test_regex_compilation_5() {
             optional: true,
             type: String,
         },
+        rtime: {
+            maximum: 999999999999999,
+            minimum: 0,
+            optional: true,
+            type: Integer,
+        },
         sdn: {
             optional: true,
             type: String,
@@ -3177,6 +3183,10 @@ fn test_regex_compilation_5() {
         },
         type: {
             type: ClusterResourceType,
+        },
+        uid: {
+            optional: true,
+            type: String,
         },
         uptime: {
             optional: true,
@@ -3320,6 +3330,13 @@ pub struct ClusterResource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<String>,
 
+    /// Time the guest was registered in this cluster, for example by creation,
+    /// a restore to a free VMID, or a migration from another cluster, in
+    /// milliseconds since the UNIX epoch (for types 'qemu' and 'lxc').
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtime: Option<u64>,
+
     /// The name of an SDN entity (for type 'sdn')
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdn: Option<String>,
@@ -3348,6 +3365,11 @@ pub struct ClusterResource {
 
     #[serde(rename = "type")]
     pub ty: ClusterResourceType,
+
+    /// Random identifier of the guest, kept across restores and migrations and
+    /// independent of the VMID (for types 'qemu' and 'lxc').
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 
     /// Uptime of node or virtual guest in seconds (for types 'node', 'qemu' and
     /// 'lxc').
@@ -6140,6 +6162,10 @@ fn test_regex_compilation_11() {
             optional: true,
             type: Integer,
         },
+        meta: {
+            optional: true,
+            type: String,
+        },
         mp: {
             type: LxcConfigMpArray,
         },
@@ -6301,6 +6327,11 @@ pub struct LxcConfig {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<u64>,
+
+    /// Read-only meta-information about this container, for example its
+    /// creation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<String>,
 
     /// Use volume as container mount point. Use the special syntax
     /// STORAGE_ID:SIZE_IN_GiB to allocate a new volume.
@@ -9860,6 +9891,10 @@ pub struct LxcSnapshot {
             default: false,
             optional: true,
         },
+        uid: {
+            optional: true,
+            type: String,
+        },
         uptime: {
             optional: true,
             type: Integer,
@@ -9981,6 +10016,11 @@ pub struct LxcStatus {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<bool>,
+
+    /// Random identifier of the guest, kept across restores and migrations and
+    /// independent of the VMID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 
     /// Uptime in seconds.
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_i64")]
@@ -15299,6 +15339,16 @@ pub struct QemuConfigMemory {
             optional: true,
             type: Integer,
         },
+        rtime: {
+            maximum: 999999999999999,
+            minimum: 0,
+            optional: true,
+            type: Integer,
+        },
+        uid: {
+            optional: true,
+            type: String,
+        },
     },
 )]
 /// Object.
@@ -15313,6 +15363,18 @@ pub struct QemuConfigMeta {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ctime: Option<u64>,
+
+    /// Time the guest was registered in this cluster, for example by creation,
+    /// a restore to a free VMID, or a migration from another cluster, in
+    /// milliseconds since the UNIX epoch.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtime: Option<u64>,
+
+    /// Random identifier of the guest, kept across restores and migrations and
+    /// independent of the VMID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 }
 
 const_regex! {
@@ -18758,6 +18820,10 @@ pub struct QemuSnapshot {
             default: false,
             optional: true,
         },
+        uid: {
+            optional: true,
+            type: String,
+        },
         uptime: {
             optional: true,
             type: Integer,
@@ -18919,6 +18985,11 @@ pub struct QemuStatus {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<bool>,
+
+    /// Random identifier of the guest, kept across restores and migrations and
+    /// independent of the VMID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
 
     /// Uptime in seconds.
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_i64")]
@@ -19146,6 +19217,10 @@ fn test_regex_compilation_34() {
 }
 #[api(
     properties: {
+        "allow-new-uid": {
+            default: false,
+            optional: true,
+        },
         bwlimit: {
             minimum: 0.0,
             optional: true,
@@ -19198,6 +19273,13 @@ fn test_regex_compilation_34() {
 /// Object.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct RemoteMigrateLxc {
+    /// Allow the migration if another guest in the target cluster already has
+    /// the uid of this guest. The migrated guest then gets a new uid.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "allow-new-uid")]
+    pub allow_new_uid: Option<bool>,
+
     /// Override I/O bandwidth limit (in KiB/s).
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_f64")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19263,6 +19345,10 @@ fn test_regex_compilation_35() {
 }
 #[api(
     properties: {
+        "allow-new-uid": {
+            default: false,
+            optional: true,
+        },
         bwlimit: {
             minimum: 0,
             optional: true,
@@ -19307,6 +19393,13 @@ fn test_regex_compilation_35() {
 /// Object.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct RemoteMigrateQemu {
+    /// Allow the migration if another guest in the target cluster already has
+    /// the uid of this guest. The migrated guest then gets a new uid.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "allow-new-uid")]
+    pub allow_new_uid: Option<bool>,
+
     /// Override I/O bandwidth limit (in KiB/s).
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_u64")]
     #[serde(default, skip_serializing_if = "Option::is_none")]

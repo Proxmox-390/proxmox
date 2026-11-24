@@ -19881,6 +19881,13 @@
                                  "optional": 1,
                                  "type": "string"
                               },
+                              "rtime": {
+                                 "description": "Time the guest was registered in this cluster, for example by creation, a restore to a free VMID, or a migration from another cluster, in milliseconds since the UNIX epoch (for types 'qemu' and 'lxc').",
+                                 "maximum": 999999999999999,
+                                 "minimum": 0,
+                                 "optional": 1,
+                                 "type": "integer"
+                              },
                               "sdn": {
                                  "description": "The name of an SDN entity (for type 'sdn')",
                                  "optional": 1,
@@ -19926,6 +19933,12 @@
                                     "sdn",
                                     "network"
                                  ],
+                                 "type": "string"
+                              },
+                              "uid": {
+                                 "description": "Random identifier of the guest, kept across restores and migrations and independent of the VMID (for types 'qemu' and 'lxc').",
+                                 "optional": 1,
+                                 "pattern": "[a-z2-7]{20}",
                                  "type": "string"
                               },
                               "uptime": {
@@ -24326,6 +24339,19 @@
                                                       "minimum": 0,
                                                       "optional": 1,
                                                       "type": "integer"
+                                                   },
+                                                   "rtime": {
+                                                      "description": "Time the guest was registered in this cluster, for example by creation, a restore to a free VMID, or a migration from another cluster, in milliseconds since the UNIX epoch.",
+                                                      "maximum": 999999999999999,
+                                                      "minimum": 0,
+                                                      "optional": 1,
+                                                      "type": "integer"
+                                                   },
+                                                   "uid": {
+                                                      "description": "Random identifier of the guest, kept across restores and migrations and independent of the VMID.",
+                                                      "optional": 1,
+                                                      "pattern": "[a-z2-7]{20}",
+                                                      "type": "string"
                                                    }
                                                 },
                                                 "optional": 1,
@@ -28823,6 +28849,12 @@
                                                       "optional": 1,
                                                       "type": "boolean"
                                                    },
+                                                   "uid": {
+                                                      "description": "Random identifier of the guest, kept across restores and migrations and independent of the VMID.",
+                                                      "optional": 1,
+                                                      "pattern": "[a-z2-7]{20}",
+                                                      "type": "string"
+                                                   },
                                                    "uptime": {
                                                       "description": "Uptime in seconds.",
                                                       "optional": 1,
@@ -30656,6 +30688,12 @@
                                        "parameters": {
                                           "additionalProperties": 0,
                                           "properties": {
+                                             "allow-new-uid": {
+                                                "default": 0,
+                                                "description": "Allow the migration if another guest in the target cluster already has the uid of this guest. The migrated guest then gets a new uid.",
+                                                "optional": 1,
+                                                "type": "boolean"
+                                             },
                                              "bwlimit": {
                                                 "default": "migrate limit from datacenter or storage config",
                                                 "description": "Override I/O bandwidth limit (in KiB/s).",
@@ -34201,6 +34239,11 @@
                                                 "minimum": 16,
                                                 "optional": 1,
                                                 "type": "integer"
+                                             },
+                                             "meta": {
+                                                "description": "Read-only meta-information about this container, for example its creation time.",
+                                                "optional": 1,
+                                                "type": "string"
                                              },
                                              "mp0": {
                                                 "description": "Use volume as container mount point. Use the special syntax STORAGE_ID:SIZE_IN_GiB to allocate a new volume.",
@@ -38818,6 +38861,12 @@
                                                       "optional": 1,
                                                       "type": "boolean"
                                                    },
+                                                   "uid": {
+                                                      "description": "Random identifier of the guest, kept across restores and migrations and independent of the VMID.",
+                                                      "optional": 1,
+                                                      "pattern": "[a-z2-7]{20}",
+                                                      "type": "string"
+                                                   },
                                                    "uptime": {
                                                       "description": "Uptime in seconds.",
                                                       "optional": 1,
@@ -41250,6 +41299,12 @@
                                        "parameters": {
                                           "additionalProperties": 0,
                                           "properties": {
+                                             "allow-new-uid": {
+                                                "default": 0,
+                                                "description": "Allow the migration if another guest in the target cluster already has the uid of this guest. The migrated guest then gets a new uid.",
+                                                "optional": 1,
+                                                "type": "boolean"
+                                             },
                                              "bwlimit": {
                                                 "default": "migrate limit from datacenter or storage config",
                                                 "description": "Override I/O bandwidth limit (in KiB/s).",
