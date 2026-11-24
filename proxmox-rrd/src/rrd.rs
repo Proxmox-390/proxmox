@@ -467,13 +467,13 @@ impl Database {
     ///
     /// Note: This does not call [Self::save].
     pub fn update(&mut self, time: f64, value: f64) {
-        let value = match self.source.compute_new_value(time, value) {
-            Ok(value) => value,
-            Err(err) => {
-                log::error!("rrd update failed: {}", err);
-                return;
-            }
-        };
+        if let Err(err) = self.try_update(time, value) {
+            log::error!("rrd update failed: {}", err);
+        }
+    }
+
+    pub(crate) fn try_update(&mut self, time: f64, value: f64) -> Result<(), Error> {
+        let value = self.source.compute_new_value(time, value)?;
 
         let last_update = self.source.last_update;
         self.source.last_update = time;
@@ -482,6 +482,8 @@ impl Database {
             rra.delete_old_slots(time, last_update);
             rra.compute_new_value(time, last_update, value);
         }
+
+        Ok(())
     }
 
     /// Extract data from the archive

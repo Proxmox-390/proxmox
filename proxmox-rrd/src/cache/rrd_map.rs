@@ -41,9 +41,7 @@ impl RRDMap {
         new_only: bool,
     ) -> Result<(), Error> {
         if let Some(rrd) = self.map.get_mut(rel_path) {
-            if !new_only || time > rrd.last_update() {
-                rrd.update(time, value);
-            }
+            update_rrd(rrd, rel_path, time, value, new_only);
         } else {
             let mut path = self.config.basedir.clone();
             path.push(rel_path);
@@ -60,9 +58,7 @@ impl RRDMap {
                 Some(rrd) => rrd,
             };
 
-            if !new_only || time > rrd.last_update() {
-                rrd.update(time, value);
-            }
+            update_rrd(&mut rrd, rel_path, time, value, new_only);
             self.map.insert(rel_path.to_string(), rrd);
         }
         Ok(())
@@ -118,5 +114,13 @@ impl RRDMap {
         } else {
             Ok(false)
         }
+    }
+}
+
+fn update_rrd(rrd: &mut Database, rel_path: &str, time: f64, value: f64, new_only: bool) {
+    if (!new_only || time > rrd.last_update())
+        && let Err(err) = rrd.try_update(time, value)
+    {
+        log::error!("rrd update failed for '{rel_path}': {err}");
     }
 }
