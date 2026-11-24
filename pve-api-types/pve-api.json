@@ -30628,6 +30628,12 @@
                                                 "optional": 1,
                                                 "type": "boolean"
                                              },
+                                             "skip-config-check": {
+                                                "default": 0,
+                                                "description": "For intra-cluster migration. Skip checking if the configuration can be parsed successfully by the target. Using this flag can lead to dropped configuration options if the target is too old to parse them.",
+                                                "optional": 1,
+                                                "type": "boolean"
+                                             },
                                              "target": {
                                                 "completion": ("Code")[],
                                                 "description": "Target node.",
@@ -41527,6 +41533,12 @@
                                              },
                                              "restart": {
                                                 "description": "Use restart migration",
+                                                "optional": 1,
+                                                "type": "boolean"
+                                             },
+                                             "skip-config-check": {
+                                                "default": 0,
+                                                "description": "For intra-cluster migration. Skip checking if the configuration can be parsed successfully by the target. Using this flag can lead to dropped or ignored configuration options if the target is too old to parse them.",
                                                 "optional": 1,
                                                 "type": "boolean"
                                              },

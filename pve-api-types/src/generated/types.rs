@@ -10189,6 +10189,10 @@ fn test_regex_compilation_16() {
             default: false,
             optional: true,
         },
+        "skip-config-check": {
+            default: false,
+            optional: true,
+        },
         target: {
             format: &ApiStringFormat::Pattern(&MIGRATE_LXC_TARGET_RE),
             type: String,
@@ -10226,6 +10230,14 @@ pub struct MigrateLxc {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart: Option<bool>,
+
+    /// For intra-cluster migration. Skip checking if the configuration can be
+    /// parsed successfully by the target. Using this flag can lead to dropped
+    /// or ignored configuration options if the target is too old to parse them.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "skip-config-check")]
+    pub skip_config_check: Option<bool>,
 
     /// Target node.
     pub target: String,
@@ -10280,6 +10292,10 @@ fn test_regex_compilation_17() {
             default: false,
             optional: true,
         },
+        "skip-config-check": {
+            default: false,
+            optional: true,
+        },
         target: {
             format: &ApiStringFormat::Pattern(&MIGRATE_QEMU_TARGET_RE),
             type: String,
@@ -10328,6 +10344,14 @@ pub struct MigrateQemu {
     #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub online: Option<bool>,
+
+    /// For intra-cluster migration. Skip checking if the configuration can be
+    /// parsed successfully by the target. Using this flag can lead to dropped
+    /// configuration options if the target is too old to parse them.
+    #[serde(deserialize_with = "proxmox_serde::perl::deserialize_bool")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "skip-config-check")]
+    pub skip_config_check: Option<bool>,
 
     /// Target node.
     pub target: String,
