@@ -148,6 +148,25 @@ fn replay_skips_invalid_paths() {
 }
 
 #[test]
+fn replay_skips_unusable_entries() {
+    let dir = TestDir::new();
+    std::fs::write(dir.0.join("file"), b"").unwrap();
+    let journal = b"100:1:0:host/cpu\n\xff\xfe\n100:1:0:file/value\n110:2:0:host/cpu\n";
+    std::fs::write(dir.0.join("rrd.journal"), journal).unwrap();
+    let cache = new_cache(&dir.0);
+    apply_and_commit_journal_thread(
+        Arc::clone(&cache.config),
+        Arc::clone(&cache.state),
+        Arc::clone(&cache.rrd_map),
+        false,
+    )
+    .unwrap();
+    assert!(cache.state.read().unwrap().journal_applied);
+    let database = Database::load(&dir.0.join("host/cpu"), false).unwrap();
+    assert_eq!(database.last_update(), 110.0);
+}
+
+#[test]
 fn valid_metric_paths_round_trip() {
     let dir = TestDir::new();
     let cache = new_cache(&dir.0);

@@ -346,19 +346,22 @@ fn apply_journal_lines(
 
     loop {
         linenr += 1;
-        let mut line = String::new();
+        let mut line = Vec::new();
         let len = if lock_read_line {
             let _lock = state.read().unwrap(); // make sure we read entire lines
-            reader.read_line(&mut line)?
+            reader.read_until(b'\n', &mut line)?
         } else {
-            reader.read_line(&mut line)?
+            reader.read_until(b'\n', &mut line)?
         };
 
         if len == 0 {
             break;
         }
 
-        let entry: JournalEntry = match line.parse() {
+        let entry = std::str::from_utf8(&line)
+            .map_err(Error::from)
+            .and_then(str::parse::<JournalEntry>);
+        let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
                 log::warn!(
@@ -371,14 +374,18 @@ fn apply_journal_lines(
             }
         };
 
-        rrd_map.write().unwrap().update(
+        match rrd_map.write().unwrap().update(
             &entry.rel_path,
             entry.time,
             entry.value,
             entry.dst,
             true,
-        )?;
-        entries += 1;
+        ) {
+            Ok(()) => entries += 1,
+            Err(err) => log::error!(
+                "unable to apply rrd journal '{journal_name}' line {linenr} (skip) - {err}"
+            ),
+        }
     }
     Ok(entries)
 }
