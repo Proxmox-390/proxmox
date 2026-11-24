@@ -58,8 +58,7 @@ impl RRAv1 {
         let rra_end = reso * ((self.last_update as u64) / reso);
         let rra_start = rra_end - reso * (RRD_DATA_ENTRIES as u64);
 
-        let mut t = rra_start;
-        let mut index = ((t / reso) % (RRD_DATA_ENTRIES as u64)) as usize;
+        let mut index = ((rra_start / reso) % (RRD_DATA_ENTRIES as u64)) as usize;
         for _ in 0..RRD_DATA_ENTRIES {
             let value = self.data[index];
             if value.is_nan() {
@@ -68,7 +67,6 @@ impl RRAv1 {
                 list.push(Some(value));
             }
 
-            t += reso;
             index = (index + 1) % RRD_DATA_ENTRIES;
         }
 
