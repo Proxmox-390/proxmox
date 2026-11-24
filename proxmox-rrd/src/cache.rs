@@ -56,10 +56,12 @@ impl Cache {
     ///
     /// `apply_interval`: Commit journal after `apply_interval` seconds.
     ///
-    /// `load_rrd_cb`; The callback function is used to load RRD files,
-    /// and should return a newly generated RRD if the file does not
-    /// exists (or is unreadable). This may generate RRDs with
-    /// different configurations (dependent on `rel_path`).
+    /// `load_rrd_cb`: Loads the RRD file at `path`. Return `None` if the file does not exist or
+    /// cannot be loaded. The cache then creates a new RRD for updates, and returns no data on
+    /// reads.
+    ///
+    /// `create_rrd_cb`: Creates a new RRD for a metric with the given data source type, after the
+    /// cache created the directory for its file.
     ///
     /// Callbacks run with cache locks held and must not call back into this cache.
     pub fn new<P: AsRef<Path>>(
