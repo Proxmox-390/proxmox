@@ -142,6 +142,11 @@ const CEPH_RELEASES: &[CephRelease] = &[
         name: "Tentacle",
         suites: &[DebianCodename::Trixie],
     },
+    CephRelease {
+        repo_type: APTRepoType::CephUmbrella,
+        name: "Umbrella",
+        suites: &[DebianCodename::Trixie],
+    },
 ];
 
 /// One materialized standard-repo row, built from a [`HostProductDef`] or [`CephRelease`]
