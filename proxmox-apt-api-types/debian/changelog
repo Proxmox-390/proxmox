@@ -1,3 +1,9 @@
+rust-proxmox-apt-api-types (3.0.1-1) trixie; urgency=medium
+
+  * add Ceph Umbrella as new standard repository.
+
+ -- Proxmox Support Team <support@proxmox.com>  Wed, 25 Nov 2026 12:51:45 +0100
+
 rust-proxmox-apt-api-types (3.0.0-1) trixie; urgency=medium
 
   * APTRepositoryHandle changes from a flat enum to a struct over

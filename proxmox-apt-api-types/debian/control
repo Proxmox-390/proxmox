@@ -7,8 +7,8 @@ Build-Depends-Arch: cargo:native <!nocheck>,
  rustc:native <!nocheck>,
  libstd-rust-dev <!nocheck>,
  librust-proxmox-config-digest-1+default-dev <!nocheck>,
- librust-proxmox-schema-5+api-macro-dev (>= 5.5.0-~~) <!nocheck>,
- librust-proxmox-schema-5+default-dev (>= 5.5.0-~~) <!nocheck>,
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~) <!nocheck>,
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~) <!nocheck>,
  librust-proxmox-serde-1+default-dev <!nocheck>,
  librust-proxmox-serde-1+perl-dev <!nocheck>,
  librust-proxmox-serde-1+serde-json-dev <!nocheck>,
@@ -28,8 +28,8 @@ Multi-Arch: same
 Depends:
  ${misc:Depends},
  librust-proxmox-config-digest-1+default-dev,
- librust-proxmox-schema-5+api-macro-dev (>= 5.5.0-~~),
- librust-proxmox-schema-5+default-dev (>= 5.5.0-~~),
+ librust-proxmox-schema-5+api-macro-dev (>= 5.7.0-~~),
+ librust-proxmox-schema-5+default-dev (>= 5.7.0-~~),
  librust-proxmox-serde-1+default-dev,
  librust-proxmox-serde-1+perl-dev,
  librust-proxmox-serde-1+serde-json-dev,
@@ -42,7 +42,7 @@ Provides:
  librust-proxmox-apt-api-types-3+default-dev (= ${binary:Version}),
  librust-proxmox-apt-api-types-3.0-dev (= ${binary:Version}),
  librust-proxmox-apt-api-types-3.0+default-dev (= ${binary:Version}),
- librust-proxmox-apt-api-types-3.0.0-dev (= ${binary:Version}),
- librust-proxmox-apt-api-types-3.0.0+default-dev (= ${binary:Version})
+ librust-proxmox-apt-api-types-3.0.1-dev (= ${binary:Version}),
+ librust-proxmox-apt-api-types-3.0.1+default-dev (= ${binary:Version})
 Description: APT API type definitions - Rust source code
  Source code for Debianized Rust crate "proxmox-apt-api-types"
